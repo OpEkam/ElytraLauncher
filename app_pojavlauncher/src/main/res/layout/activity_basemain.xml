@@ -12,9 +12,16 @@
 
 	
     <FrameLayout
-        android:id="@+id/content_frame"
+    android:id="@+id/content_frame"
+    android:layout_width="match_parent"
+    android:layout_height="match_parent">
+
+    <net.kdt.pojavlaunch.customcontrols.ControlLayout
+        android:id="@+id/main_control_layout"
         android:layout_width="match_parent"
         android:layout_height="match_parent">
+
+        <View style="@style/DimensionTracker"/>
 
         <net.kdt.pojavlaunch.MinecraftGLSurface
             android:id="@+id/main_game_render_view"
@@ -23,13 +30,11 @@
             android:defaultFocusHighlightEnabled="false"
             tools:ignore="UnusedAttribute" />
 
-        <net.kdt.pojavlaunch.customcontrols.ControlLayout
-            android:id="@+id/main_control_layout"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent">
-			
-			<View style="@style/DimensionTracker"/>
+        <!-- Keep the remaining existing controls here -->
 
+    </net.kdt.pojavlaunch.customcontrols.ControlLayout>
+
+</FrameLayout>
 			
 
 			<net.kdt.pojavlaunch.customcontrols.mouse.Touchpad
