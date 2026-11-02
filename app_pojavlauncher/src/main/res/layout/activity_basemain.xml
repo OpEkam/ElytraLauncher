@@ -10,32 +10,24 @@
 	android:background="@drawable/no_focus_shown"
 	android:keepScreenOn="true">
 
-	
-    <FrameLayout
-    android:id="@+id/content_frame"
-    android:layout_width="match_parent"
-    android:layout_height="match_parent">
+	<FrameLayout
+		android:id="@+id/content_frame"
+		android:layout_width="match_parent"
+		android:layout_height="match_parent">
 
-    <net.kdt.pojavlaunch.customcontrols.ControlLayout
-        android:id="@+id/main_control_layout"
-        android:layout_width="match_parent"
-        android:layout_height="match_parent">
+		<net.kdt.pojavlaunch.customcontrols.ControlLayout
+			android:id="@+id/main_control_layout"
+			android:layout_width="match_parent"
+			android:layout_height="match_parent">
 
-        <View style="@style/DimensionTracker"/>
+			<View style="@style/DimensionTracker"/>
 
-        <net.kdt.pojavlaunch.MinecraftGLSurface
-            android:id="@+id/main_game_render_view"
-            android:layout_width="fill_parent"
-            android:layout_height="fill_parent"
-            android:defaultFocusHighlightEnabled="false"
-            tools:ignore="UnusedAttribute" />
-
-        <!-- Keep the remaining existing controls here -->
-
-    </net.kdt.pojavlaunch.customcontrols.ControlLayout>
-
-</FrameLayout>
-			
+			<net.kdt.pojavlaunch.MinecraftGLSurface
+				android:id="@+id/main_game_render_view"
+				android:layout_width="fill_parent"
+				android:layout_height="fill_parent"
+				android:defaultFocusHighlightEnabled="false"
+                tools:ignore="UnusedAttribute" />
 
 			<net.kdt.pojavlaunch.customcontrols.mouse.Touchpad
 				android:layout_height="match_parent"
@@ -108,4 +100,3 @@
 		android:id="@+id/main_navigation_view"/>
 
 </androidx.drawerlayout.widget.DrawerLayout>
-
