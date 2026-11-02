@@ -72,7 +72,6 @@ public class LauncherPreferences {
     public static boolean PREF_VSYNC_IN_ZINK = true;
     public static boolean PREF_FORCE_ENABLE_TOUCHCONTROLLER = false;
     public static int PREF_TOUCHCONTROLLER_VIBRATE_LENGTH = 100;
-	public static boolean PREF_SHOW_CONTROLS_IN_RECORDING = true;
    
 	public static boolean PREF_MOUSE_GRAB_FORCE = false;
     public static boolean PREF_KEYBOARD_PANNING = true;
