@@ -5,6 +5,7 @@ import static net.kdt.pojavlaunch.Tools.dialogForceClose;
 import static net.kdt.pojavlaunch.Tools.hasMods;
 import static net.kdt.pojavlaunch.Tools.runMethodbyReflection;
 import static net.kdt.pojavlaunch.prefs.LauncherPreferences.PREF_ENABLE_GYRO;
+import static net.kdt.pojavlaunch.prefs.LauncherPreferences.PREF_SHOW_CONTROLS_IN_RECORDING;
 import static net.kdt.pojavlaunch.prefs.LauncherPreferences.PREF_SUSTAINED_PERFORMANCE;
 import static net.kdt.pojavlaunch.prefs.LauncherPreferences.PREF_USE_ALTERNATE_SURFACE;
 import static net.kdt.pojavlaunch.prefs.LauncherPreferences.PREF_VIRTUAL_MOUSE_START;
@@ -71,6 +72,7 @@ import net.kdt.pojavlaunch.prefs.QuickSettingSideDialog;
 import net.kdt.pojavlaunch.services.GameService;
 import net.kdt.pojavlaunch.utils.JREUtils;
 import net.kdt.pojavlaunch.utils.MCOptionUtils;
+import net.kdt.pojavlaunch.utils.RecordingSecureOverlay;
 import net.kdt.pojavlaunch.utils.TouchControllerInputView;
 import net.kdt.pojavlaunch.utils.TouchControllerUtils;
 import net.kdt.pojavlaunch.value.MinecraftAccount;
@@ -101,6 +103,7 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
     private DrawerLayout drawerLayout;
     private ListView navDrawer;
     private View mDrawerPullButton;
+    private RecordingSecureOverlay recordingSecureOverlay;
     private GyroControl mGyroControl = null;
     private ControlLayout mControlLayout;
     private HotbarView mHotbarView;
@@ -221,6 +224,9 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
         mControlLayout.setMenuListener(this);
 
         mDrawerPullButton.setOnClickListener(v -> onClickedMenu());
+        if (!PREF_SHOW_CONTROLS_IN_RECORDING) {
+            recordingSecureOverlay = new RecordingSecureOverlay(this, mDrawerPullButton, 40, 20);
+        }
         drawerLayout.setDrawerLockMode(DrawerLayout.LOCK_MODE_LOCKED_CLOSED);
 
         try {
@@ -324,6 +330,7 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
         mControlLayout.post(()->{
             Tools.getDisplayMetrics(this);
             loadControls();
+            if (recordingSecureOverlay != null) recordingSecureOverlay.attach();
         });
     }
 
@@ -380,6 +387,7 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
 
     @Override
     protected void onDestroy() {
+        if (recordingSecureOverlay != null) recordingSecureOverlay.detach();
         super.onDestroy();
         CallbackBridge.removeGrabListener(touchpad);
         CallbackBridge.removeGrabListener(minecraftGLView);
