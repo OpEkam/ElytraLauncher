@@ -47,6 +47,36 @@ jobs:
           test -d "$ANDROID_HOME" || (echo "Android SDK not found at ANDROID_HOME" && exit 1)
           ls "$ANDROID_HOME"
 
+      - name: Configure Maven Central mirror for CI
+        run: |
+          mkdir -p ~/.gradle
+          cat > ~/.gradle/init.gradle <<'EOF'
+          allprojects {
+              repositories {
+                  maven { url 'https://maven-central.storage-download.googleapis.com/maven2/' }
+                  mavenCentral()
+              }
+              buildscript {
+                  repositories {
+                      maven { url 'https://maven-central.storage-download.googleapis.com/maven2/' }
+                      mavenCentral()
+                  }
+              }
+          }
+          settingsEvaluated { settings ->
+              settings.pluginManagement.repositories {
+                  maven { url 'https://maven-central.storage-download.googleapis.com/maven2/' }
+                  gradlePluginPortal()
+                  google()
+              }
+              settings.dependencyResolutionManagement.repositories {
+                  maven { url 'https://maven-central.storage-download.googleapis.com/maven2/' }
+                  mavenCentral()
+                  google()
+              }
+          }
+          EOF
+
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
 
