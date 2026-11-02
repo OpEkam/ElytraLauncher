@@ -460,7 +460,7 @@ public class ControlLayout extends FrameLayout {
 	/** Cached getter for perf purposes */
 	public MinecraftGLSurface getGameSurface(){
 		if(mGameSurface == null){
-			mGameSurface = findViewById(R.id.main_game_render_view);
+			mGameSurface = getRootView().findViewById(R.id.main_game_render_view);
 		}
 		return mGameSurface;
 	}
