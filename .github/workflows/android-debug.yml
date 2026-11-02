@@ -38,8 +38,14 @@ jobs:
           distribution: temurin
           java-version: '21'
 
-      - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+      # GitHub-hosted Ubuntu runners already include the Android SDK.
+      # Avoid setup-android's sdkmanager update step, which failed before
+      # Gradle could start in the previous run.
+      - name: Show Android SDK configuration
+        run: |
+          echo "ANDROID_HOME=$ANDROID_HOME"
+          test -d "$ANDROID_HOME" || (echo "Android SDK not found at ANDROID_HOME" && exit 1)
+          ls "$ANDROID_HOME"
 
       - name: Set up Gradle
         uses: gradle/actions/setup-gradle@v4
