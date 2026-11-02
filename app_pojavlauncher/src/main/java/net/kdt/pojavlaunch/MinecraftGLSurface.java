@@ -244,8 +244,7 @@ public class MinecraftGLSurface extends View implements GrabListener, DirectGame
     public boolean onTouchEvent(MotionEvent e) {
         // Kinda need to send this back to the layout
         
-ControlLayout controlLayout = getRootView().findViewById(R.id.main_control_layout);
-if (controlLayout != null && controlLayout.getModifiable()) return false;
+if(((ControlLayout)getParent()).getModifiable()) return false;
         
 
         // Looking for a mouse to handle, won't have an effect if no mouse exists.
