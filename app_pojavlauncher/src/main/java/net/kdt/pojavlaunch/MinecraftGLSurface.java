@@ -181,7 +181,7 @@ public class MinecraftGLSurface extends View implements GrabListener, DirectGame
                 }
             });
 
-            ((ViewGroup)getParent()).addView(surfaceView);
+            ((ViewGroup)getParent()).addView(surfaceView, 0);
         }else{
             TextureView textureView = new TextureView(getContext());
             textureView.setOpaque(true);
@@ -229,7 +229,7 @@ public class MinecraftGLSurface extends View implements GrabListener, DirectGame
                 }
             });
 
-            ((ViewGroup)getParent()).addView(textureView);
+            ((ViewGroup)getParent()).addView(textureView, 0);
         }
 
 
