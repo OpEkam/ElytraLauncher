@@ -504,16 +504,28 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
 
         // Ensure a compatible runtime exists before launch. Modern versions may use a
         // bundled runtime; legacy versions without javaVersion metadata require Java 8.
-        if (version.javaVersion != null) {
-            if (!NewJREUtil.installNewJreIfNeeded(this, version)) {
-                Tools.runOnUiThread(() -> mServiceBinder.isActive = false);
-                return;
+        boolean requiresLegacyJava8 = version.javaVersion == null
+                || "jre-legacy".equalsIgnoreCase(version.javaVersion.component);
+        if (requiresLegacyJava8) {
+            // Legacy versions (including 1.7.10) use Java 8 even if metadata has
+            // a javaVersion object with component "jre-legacy".
+            if (net.kdt.pojavlaunch.multirt.MultiRTUtils.getExactJreName(8) == null) {
+                try {
+                    NewJREUtil.ExternalRuntime.JRE_8.downloadRuntime(this);
+                } catch (RuntimeException e) {
+                    Log.e("runCraft", "Could not automatically install Java 8", e);
+                    Tools.showError(this, e);
+                    Tools.runOnUiThread(() -> mServiceBinder.isActive = false);
+                    return;
+                }
             }
-            LauncherProfiles.load();
-        } else if (net.kdt.pojavlaunch.multirt.MultiRTUtils.getExactJreName(8) == null) {
-            NewJREUtil.ExternalRuntime.JRE_8.downloadRuntime(this);
+        } else if (!NewJREUtil.installNewJreIfNeeded(this, version)) {
+            Tools.runOnUiThread(() -> mServiceBinder.isActive = false);
+            return;
         }
 
+        LauncherProfiles.load();
+        minecraftProfile = LauncherProfiles.getCurrentProfile();
         Tools.launchMinecraft(this, minecraftAccount, minecraftProfile, versionId, requiredJavaVersion);
         //Note that we actually stall in the above function, even if the game crashes. But let's be safe.
         Tools.runOnUiThread(()-> mServiceBinder.isActive = false);
