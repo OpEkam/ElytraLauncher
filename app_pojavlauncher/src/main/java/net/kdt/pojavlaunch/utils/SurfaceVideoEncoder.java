@@ -4,8 +4,6 @@ import android.media.MediaCodec;
 import android.media.MediaCodecInfo;
 import android.media.MediaFormat;
 import android.media.MediaMuxer;
-import android.os.Build;
-import android.os.SystemClock;
 import android.view.Surface;
 
 import java.io.File;
@@ -38,9 +36,6 @@ public final class SurfaceVideoEncoder implements AutoCloseable {
     public synchronized void start(File output, int width, int height, int bitRate, int frameRate)
             throws IOException {
         if (started || codec != null) throw new IllegalStateException("Encoder already started");
-        if (Build.VERSION.SDK_INT < 23) {
-            throw new IOException("Surface video encoding requires Android 6.0 or newer");
-        }
         if (output == null || width < 2 || height < 2 || bitRate < 1 || frameRate < 1) {
             throw new IllegalArgumentException("Invalid output or video dimensions/quality");
         }
@@ -53,6 +48,9 @@ public final class SurfaceVideoEncoder implements AutoCloseable {
             throw new IOException("Cannot create recording directory: " + parent);
         }
 
+        drainFailure = null;
+        muxerStarted = false;
+        trackIndex = -1;
         try {
             MediaFormat format = MediaFormat.createVideoFormat(MIME_TYPE, width, height);
             format.setInteger(MediaFormat.KEY_COLOR_FORMAT,
@@ -92,7 +90,9 @@ public final class SurfaceVideoEncoder implements AutoCloseable {
                 if (localCodec == null) break;
                 int index = localCodec.dequeueOutputBuffer(info, CODEC_TIMEOUT_US);
                 if (index == MediaCodec.INFO_TRY_AGAIN_LATER) {
-                    if (stopping) break;
+                    // After signalEndOfInputStream(), keep draining until the codec
+                    // actually emits BUFFER_FLAG_END_OF_STREAM. Exiting here can
+                    // truncate the MP4 before its final samples are written.
                     continue;
                 }
                 if (index == MediaCodec.INFO_OUTPUT_FORMAT_CHANGED) {
@@ -114,7 +114,6 @@ public final class SurfaceVideoEncoder implements AutoCloseable {
                 boolean endOfStream = (info.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
                 localCodec.releaseOutputBuffer(index, false);
                 if (endOfStream) break;
-                if (stopping && index == MediaCodec.INFO_TRY_AGAIN_LATER) break;
             }
         } catch (IOException | RuntimeException e) {
             drainFailure = e instanceof IOException ? (IOException) e
