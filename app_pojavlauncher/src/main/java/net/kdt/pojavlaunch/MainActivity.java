@@ -476,9 +476,14 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
         // as the list of priority to use, highest to lowest.
         if(!Tools.checkRendererCompatible(this, Tools.LOCAL_RENDERER)) {
             Tools.RenderersList renderersList = Tools.getCompatibleRenderers(this);
+            if (renderersList.rendererIds.isEmpty()) {
+                throw new IllegalStateException("No compatible renderer is available on this device");
+            }
             String firstCompatibleRenderer = renderersList.rendererIds.get(0);
             Log.i("runCraft","Missing renderer "+Tools.LOCAL_RENDERER+ " will be replaced with "+firstCompatibleRenderer);
             Tools.LOCAL_RENDERER = firstCompatibleRenderer;
+            minecraftProfile.pojavRendererName = firstCompatibleRenderer;
+            LauncherProfiles.write();
             Tools.releaseRenderersCache();
         }
 
@@ -503,6 +508,19 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
         LauncherProfiles.load();
         int requiredJavaVersion = 8;
         if(version.javaVersion != null) requiredJavaVersion = version.javaVersion.majorVersion;
+
+        // Ensure a compatible runtime exists before launch. Modern versions may use a
+        // bundled runtime; legacy versions without javaVersion metadata require Java 8.
+        if (version.javaVersion != null) {
+            if (!NewJREUtil.installNewJreIfNeeded(this, version)) {
+                Tools.runOnUiThread(() -> mServiceBinder.isActive = false);
+                return;
+            }
+            LauncherProfiles.load();
+        } else if (net.kdt.pojavlaunch.multirt.MultiRTUtils.getExactJreName(8) == null) {
+            NewJREUtil.ExternalRuntime.JRE_8.downloadRuntime(this);
+        }
+
         Tools.launchMinecraft(this, minecraftAccount, minecraftProfile, versionId, requiredJavaVersion);
         //Note that we actually stall in the above function, even if the game crashes. But let's be safe.
         Tools.runOnUiThread(()-> mServiceBinder.isActive = false);
