@@ -122,6 +122,18 @@ public class NewJREUtil {
             }
 
 
+        // If no installed or bundled runtime is suitable, install the required
+        // external runtime when this Java major version is downloadable.
+        if (selectedRankedRuntime == null && isJavaVersionAvailableForDownload(gameRequiredVersion)) {
+            try {
+                tryDownloadRuntime(activity, gameRequiredVersion);
+                nearestInstalledRuntime = getNearestInstalledRuntime(gameRequiredVersion);
+                selectedRankedRuntime = nearestInstalledRuntime;
+            } catch (RuntimeException e) {
+                Log.e("NewJREAuto", "Automatic runtime download failed", e);
+            }
+        }
+
         // No possible selections
         if(selectedRankedRuntime == null) {
             showRuntimeFail(activity, versionInfo);
