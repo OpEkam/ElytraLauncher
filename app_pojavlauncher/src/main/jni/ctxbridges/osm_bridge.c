@@ -28,7 +28,11 @@ void osm_set_frame_capture_enabled(bool enabled) {
 bool osm_copy_latest_frame(void* destination, size_t capacity, int* metadata) {
     if (destination == NULL || metadata == NULL || pthread_mutex_lock(&capture_mutex) != 0)
         return false;
-    size_t bytes = (size_t) capture_stride * (size_t) capture_height * 4;
+    size_t bytes = 0;
+    if (capture_stride > 0 && capture_height > 0
+            && (size_t) capture_stride <= SIZE_MAX / (size_t) capture_height / 4) {
+        bytes = (size_t) capture_stride * (size_t) capture_height * 4;
+    }
     bool valid = capture_pixels != NULL && bytes > 0 && capacity >= bytes;
     if (valid) {
         memcpy(destination, capture_pixels, bytes);
@@ -43,7 +47,10 @@ bool osm_copy_latest_frame(void* destination, size_t capacity, int* metadata) {
 
 static void capture_current_frame(const ANativeWindow_Buffer* buffer) {
     if (!atomic_load(&capture_enabled) || buffer == NULL || buffer->bits == NULL
+            || buffer->format != WINDOW_FORMAT_RGBX_8888
             || buffer->width <= 0 || buffer->height <= 0 || buffer->stride < buffer->width)
+        return;
+    if ((size_t) buffer->stride > SIZE_MAX / (size_t) buffer->height / 4)
         return;
     if (pthread_mutex_trylock(&capture_mutex) != 0) return; // Drop this frame if reader is copying.
     size_t bytes = (size_t) buffer->stride * (size_t) buffer->height * 4;
