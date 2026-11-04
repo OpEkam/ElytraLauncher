@@ -79,7 +79,12 @@ public final class GameplayFrameRecorder implements AutoCloseable {
     public void stop() throws IOException {
         Thread thread;
         synchronized (stateLock) {
-            if (worker == null) return;
+            if (worker == null) {
+                IOException failure = workerFailure;
+                workerFailure = null;
+                if (failure != null) throw failure;
+                return;
+            }
             stopRequested = true;
             thread = worker;
         }
@@ -99,7 +104,9 @@ public final class GameplayFrameRecorder implements AutoCloseable {
             worker = null;
             running = false;
             paused = false;
-            if (workerFailure != null) throw workerFailure;
+            IOException failure = workerFailure;
+            workerFailure = null;
+            if (failure != null) throw failure;
         }
     }
 
@@ -199,7 +206,11 @@ public final class GameplayFrameRecorder implements AutoCloseable {
                 }
                 encoder = null;
             }
-            running = false;
+            synchronized (stateLock) {
+                running = false;
+                paused = false;
+                if (worker == Thread.currentThread()) worker = null;
+            }
             if (workerFailure != null && listener != null) listener.onRecordingError(workerFailure);
         }
     }
