@@ -628,6 +628,10 @@ public class JREUtils {
     public static native void setLdLibraryPath(String ldLibraryPath);
     public static native void setupBridgeWindow(Object surface);
     public static native void releaseBridgeWindow();
+    /** Enables OSMesa-only frame snapshots for the gameplay recorder. */
+    public static native void setFrameCaptureEnabled(boolean enabled);
+    /** Copies the newest RGBX frame into a direct buffer; info = width, height, row stride, sequence. */
+    public static native boolean copyLatestFrame(java.nio.ByteBuffer destination, int[] info);
     public static native void initializeHooks();
     public static native void setupExitMethod(Context context);
     // Obtain AWT screen pixels to render on Android SurfaceView
