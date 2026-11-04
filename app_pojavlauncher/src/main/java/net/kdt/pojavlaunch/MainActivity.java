@@ -630,7 +630,8 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
                 Toast.makeText(MainActivity.this, "Recording error: " + error.getMessage(),
                         Toast.LENGTH_LONG).show()));
         try {
-            gameplayFrameRecorder.start(latestRecordingFile, 8_000_000, 30, recordMicrophone);
+            gameplayFrameRecorder.start(latestRecordingFile, 8_000_000, 30,
+                    minecraftGLView.mSurface, recordMicrophone);
             Toast.makeText(this, recordMicrophone
                             ? "Starting gameplay recording with microphone. Renderer support is required."
                             : "Starting gameplay video recording. Renderer support is required.",
