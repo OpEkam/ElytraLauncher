@@ -1,6 +1,8 @@
 package net.kdt.pojavlaunch.utils;
 
+import android.graphics.Bitmap;
 import android.util.Log;
+import android.view.View;
 
 import java.io.File;
 import java.io.IOException;
@@ -34,6 +36,7 @@ public final class GameplayFrameRecorder implements AutoCloseable {
     private File videoTempFile;
     private File audioTempFile;
     private boolean includeMicrophone;
+    private View captureView;
 
     public GameplayFrameRecorder(Listener listener) {
         this.listener = listener;
@@ -47,6 +50,12 @@ public final class GameplayFrameRecorder implements AutoCloseable {
     /** Starts gameplay capture with optional microphone audio. */
     public void start(File output, int requestedBitRate, int requestedFrameRate,
                       boolean recordMicrophone) throws IOException {
+        start(output, requestedBitRate, requestedFrameRate, null, recordMicrophone);
+    }
+
+    /** Starts recording from the renderer's game-only Android surface when supported. */
+    public void start(File output, int requestedBitRate, int requestedFrameRate,
+                      View rendererSurface, boolean recordMicrophone) throws IOException {
         if (output == null || requestedBitRate < 1 || requestedFrameRate < 1) {
             throw new IllegalArgumentException("Output file and valid encoding settings are required");
         }
@@ -54,6 +63,7 @@ public final class GameplayFrameRecorder implements AutoCloseable {
             if (running || worker != null) throw new IllegalStateException("Recorder is already active");
             outputFile = output;
             includeMicrophone = recordMicrophone;
+            captureView = rendererSurface;
             videoTempFile = recordMicrophone
                     ? new File(output.getParentFile(), output.getName() + ".video.mp4") : output;
             audioTempFile = recordMicrophone
@@ -154,6 +164,10 @@ public final class GameplayFrameRecorder implements AutoCloseable {
         long lastSubmitNs = 0L;
         long deadline = System.currentTimeMillis() + START_TIMEOUT_MS;
         try {
+            if (captureView != null && GameplaySurfaceCapture.isSupported(captureView)) {
+                captureSurfaceFrames();
+                return;
+            }
             // The first small-buffer call obtains frame metadata even though it cannot
             // copy pixels; allocate the exact native stride and retry.
             while (!stopRequested && System.currentTimeMillis() < deadline) {
@@ -261,6 +275,56 @@ public final class GameplayFrameRecorder implements AutoCloseable {
                 if (worker == Thread.currentThread()) worker = null;
             }
             if (workerFailure != null && listener != null) listener.onRecordingError(workerFailure);
+        }
+    }
+
+
+    /**
+     * Captures the Minecraft SurfaceView with PixelCopy or TextureView with
+     * getBitmap. Both paths copy only the game surface, excluding launcher overlays.
+     */
+    private void captureSurfaceFrames() throws IOException, InterruptedException {
+        try (GameplaySurfaceCapture capture = GameplaySurfaceCapture.create(captureView)) {
+            Bitmap firstFrame = capture.capture();
+            int width = firstFrame.getWidth() & ~1;
+            int height = firstFrame.getHeight() & ~1;
+            if (width < 2 || height < 2) {
+                throw new IOException("Minecraft surface returned an invalid frame size");
+            }
+            ByteBuffer i420 = ByteBuffer.allocateDirect(width * height * 3 / 2);
+            encoder = new I420VideoEncoder();
+            encoder.start(videoTempFile, width, height, bitRate, frameRate);
+
+            long startNs = System.nanoTime();
+            long pausedAtNs = 0L;
+            long pausedTotalNs = 0L;
+            long lastSubmitNs = 0L;
+            long frameIntervalNs = 1_000_000_000L / Math.max(1, frameRate);
+
+            while (!stopRequested) {
+                if (paused) {
+                    if (pausedAtNs == 0L) pausedAtNs = System.nanoTime();
+                    Thread.sleep(15L);
+                    continue;
+                }
+                if (pausedAtNs != 0L) {
+                    pausedTotalNs += System.nanoTime() - pausedAtNs;
+                    pausedAtNs = 0L;
+                }
+                long now = System.nanoTime();
+                if (now - lastSubmitNs < frameIntervalNs) {
+                    Thread.sleep(2L);
+                    continue;
+                }
+
+                Bitmap frame = capture.capture();
+                i420.clear();
+                OsmesaFrameConverter.bitmapToI420(frame, width, height, i420);
+                i420.flip();
+                long ptsUs = Math.max(0L, (now - startNs - pausedTotalNs) / 1000L);
+                encoder.encodeFrame(i420, ptsUs);
+                lastSubmitNs = now;
+            }
         }
     }
 
