@@ -93,6 +93,27 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_releaseBridgeWindow(ABI_COMPAT JNIEnv *e
     ANativeWindow_release(pojav_environ->pojavWindow);
 }
 
+JNIEXPORT void JNICALL
+Java_net_kdt_pojavlaunch_utils_JREUtils_setFrameCaptureEnabled(JNIEnv* env, jclass clazz, jboolean enabled) {
+    if (pojav_environ->config_renderer == RENDERER_VK_ZINK)
+        osm_set_frame_capture_enabled(enabled == JNI_TRUE);
+}
+
+JNIEXPORT jboolean JNICALL
+Java_net_kdt_pojavlaunch_utils_JREUtils_copyLatestFrame(JNIEnv* env, jclass clazz,
+                                                         jobject destination, jintArray info) {
+    if (pojav_environ->config_renderer != RENDERER_VK_ZINK || destination == NULL || info == NULL
+            || (*env)->GetArrayLength(env, info) < 4)
+        return JNI_FALSE;
+    void* address = (*env)->GetDirectBufferAddress(env, destination);
+    jlong capacity = (*env)->GetDirectBufferCapacity(env, destination);
+    if (address == NULL || capacity <= 0) return JNI_FALSE;
+    jint metadata[4] = {0, 0, 0, 0};
+    if (!osm_copy_latest_frame(address, (size_t) capacity, metadata)) return JNI_FALSE;
+    (*env)->SetIntArrayRegion(env, info, 0, 4, metadata);
+    return JNI_TRUE;
+}
+
 EXTERNAL_API void* pojavGetCurrentContext() {
     return br_get_current();
 }
