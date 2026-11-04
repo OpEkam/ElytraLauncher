@@ -30,6 +30,10 @@ public final class GameplayFrameRecorder implements AutoCloseable {
     private int frameRate;
     private IOException workerFailure;
     private I420VideoEncoder encoder;
+    private MicrophoneAudioRecorder microphoneRecorder;
+    private File videoTempFile;
+    private File audioTempFile;
+    private boolean includeMicrophone;
 
     public GameplayFrameRecorder(Listener listener) {
         this.listener = listener;
@@ -37,12 +41,35 @@ public final class GameplayFrameRecorder implements AutoCloseable {
 
     /** Starts asynchronously. The MP4 is created after the first valid gameplay frame. */
     public void start(File output, int requestedBitRate, int requestedFrameRate) throws IOException {
+        start(output, requestedBitRate, requestedFrameRate, false);
+    }
+
+    /** Starts gameplay capture with optional microphone audio. */
+    public void start(File output, int requestedBitRate, int requestedFrameRate,
+                      boolean recordMicrophone) throws IOException {
         if (output == null || requestedBitRate < 1 || requestedFrameRate < 1) {
             throw new IllegalArgumentException("Output file and valid encoding settings are required");
         }
         synchronized (stateLock) {
             if (running || worker != null) throw new IllegalStateException("Recorder is already active");
             outputFile = output;
+            includeMicrophone = recordMicrophone;
+            videoTempFile = recordMicrophone
+                    ? new File(output.getParentFile(), output.getName() + ".video.mp4") : output;
+            audioTempFile = recordMicrophone
+                    ? new File(output.getParentFile(), output.getName() + ".audio.mp4") : null;
+            if (recordMicrophone) {
+                microphoneRecorder = new MicrophoneAudioRecorder();
+                try {
+                    microphoneRecorder.start(audioTempFile);
+                } catch (IOException error) {
+                    microphoneRecorder = null;
+                    throw error;
+                } catch (RuntimeException error) {
+                    microphoneRecorder = null;
+                    throw new IOException("Could not start microphone recording", error);
+                }
+            }
             bitRate = requestedBitRate;
             frameRate = requestedFrameRate;
             workerFailure = null;
@@ -57,13 +84,19 @@ public final class GameplayFrameRecorder implements AutoCloseable {
 
     public void pause() {
         synchronized (stateLock) {
-            if (running) paused = true;
+            if (running) {
+                paused = true;
+                if (microphoneRecorder != null) microphoneRecorder.pause();
+            }
         }
     }
 
     public void resume() {
         synchronized (stateLock) {
-            if (running) paused = false;
+            if (running) {
+                paused = false;
+                if (microphoneRecorder != null) microphoneRecorder.resume();
+            }
         }
     }
 
@@ -155,7 +188,7 @@ public final class GameplayFrameRecorder implements AutoCloseable {
             if (!copied) throw new IOException("Could not copy the initial gameplay frame");
 
             encoder = new I420VideoEncoder();
-            encoder.start(outputFile, frameWidth, frameHeight, bitRate, frameRate);
+            encoder.start(videoTempFile, frameWidth, frameHeight, bitRate, frameRate);
             startNs = System.nanoTime();
             lastSequence = info[3];
             while (!stopRequested) {
@@ -205,6 +238,22 @@ public final class GameplayFrameRecorder implements AutoCloseable {
                     else Log.e(TAG, "MP4 finalization also failed", e);
                 }
                 encoder = null;
+            }
+            if (microphoneRecorder != null) {
+                try { microphoneRecorder.stop(); }
+                catch (IOException e) {
+                    if (workerFailure == null) workerFailure = e;
+                    else Log.e(TAG, "Microphone finalization also failed", e);
+                }
+                microphoneRecorder = null;
+            }
+            if (includeMicrophone && workerFailure == null) {
+                try { Mp4TrackMuxer.combine(videoTempFile, audioTempFile, outputFile); }
+                catch (IOException e) { workerFailure = e; }
+            }
+            if (includeMicrophone) {
+                if (videoTempFile != null) videoTempFile.delete();
+                if (audioTempFile != null) audioTempFile.delete();
             }
             synchronized (stateLock) {
                 running = false;
