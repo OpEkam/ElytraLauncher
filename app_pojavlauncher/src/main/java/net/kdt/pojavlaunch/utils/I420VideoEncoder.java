@@ -178,11 +178,11 @@ public final class I420VideoEncoder implements AutoCloseable {
 
         long lastByte = (long) (planeHeight - 1) * rowStride
                 + (long) (planeWidth - 1) * pixelStride;
-        if (lastByte >= destination.remaining()) {
+        int destinationBase = destination.position();
+        if (lastByte >= (long) destination.limit() - destinationBase) {
             throw new IOException("AVC encoder YUV plane buffer is too small");
         }
 
-        int destinationBase = destination.position();
         for (int row = 0; row < planeHeight; row++) {
             int srcRow = sourceOffset + row * planeWidth;
             int dstRow = destinationBase + row * rowStride;
@@ -233,15 +233,18 @@ public final class I420VideoEncoder implements AutoCloseable {
             stopping = true;
             thread = drainThread;
             if (codec != null) {
-                int inputIndex = -1;
                 try {
-                    inputIndex = codec.dequeueInputBuffer(CODEC_TIMEOUT_US);
+                    int inputIndex = -1;
+                    long deadline = System.currentTimeMillis() + 5_000L;
+                    while (inputIndex < 0 && System.currentTimeMillis() < deadline) {
+                        inputIndex = codec.dequeueInputBuffer(CODEC_TIMEOUT_US);
+                    }
                     if (inputIndex >= 0) {
                         codec.queueInputBuffer(inputIndex, 0, 0,
                                 Math.max(0L, lastPresentationTimeUs + 1L),
                                 MediaCodec.BUFFER_FLAG_END_OF_STREAM);
                     } else {
-                        drainFailure = new IOException("No input slot available to finalize MP4");
+                        drainFailure = new IOException("Timed out waiting to finalize MP4 input");
                     }
                 } catch (RuntimeException e) {
                     drainFailure = new IOException("Could not signal encoder end-of-stream", e);
