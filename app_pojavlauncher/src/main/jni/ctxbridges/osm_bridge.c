@@ -33,16 +33,17 @@ bool osm_copy_latest_frame(void* destination, size_t capacity, int* metadata) {
             && (size_t) capture_stride <= SIZE_MAX / (size_t) capture_height / 4) {
         bytes = (size_t) capture_stride * (size_t) capture_height * 4;
     }
-    bool valid = capture_pixels != NULL && bytes > 0 && capacity >= bytes;
-    if (valid) {
-        memcpy(destination, capture_pixels, bytes);
+    bool has_frame = capture_pixels != NULL && bytes > 0;
+    if (has_frame) {
         metadata[0] = capture_width;
         metadata[1] = capture_height;
         metadata[2] = capture_stride;
         metadata[3] = capture_sequence;
     }
+    bool copied = has_frame && capacity >= bytes;
+    if (copied) memcpy(destination, capture_pixels, bytes);
     pthread_mutex_unlock(&capture_mutex);
-    return valid;
+    return copied;
 }
 
 static void capture_current_frame(const ANativeWindow_Buffer* buffer) {
