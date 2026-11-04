@@ -109,9 +109,12 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_copyLatestFrame(JNIEnv* env, jclass claz
     jlong capacity = (*env)->GetDirectBufferCapacity(env, destination);
     if (address == NULL || capacity <= 0) return JNI_FALSE;
     jint metadata[4] = {0, 0, 0, 0};
-    if (!osm_copy_latest_frame(address, (size_t) capacity, metadata)) return JNI_FALSE;
+    jboolean copied = osm_copy_latest_frame(address, (size_t) capacity, metadata)
+            ? JNI_TRUE : JNI_FALSE;
+    // Metadata is also returned when the supplied buffer is too small, allowing
+    // Java to size a correctly-sized direct buffer and retry the snapshot.
     (*env)->SetIntArrayRegion(env, info, 0, 4, metadata);
-    return JNI_TRUE;
+    return copied;
 }
 
 EXTERNAL_API void* pojavGetCurrentContext() {
