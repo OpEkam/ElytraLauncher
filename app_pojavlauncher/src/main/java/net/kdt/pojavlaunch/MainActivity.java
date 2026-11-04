@@ -13,6 +13,7 @@ import static org.lwjgl.glfw.CallbackBridge.sendKeyPress;
 import static org.lwjgl.glfw.CallbackBridge.windowHeight;
 import static org.lwjgl.glfw.CallbackBridge.windowWidth;
 
+import android.Manifest;
 import android.app.Activity;
 import android.app.AlertDialog;
 import android.content.ClipData;
@@ -20,6 +21,7 @@ import android.content.ClipboardManager;
 import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
+import android.content.pm.PackageManager;
 import android.content.ServiceConnection;
 import android.content.res.Configuration;
 import android.graphics.Color;
@@ -125,6 +127,8 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
     private QuickSettingSideDialog mQuickSettingSideDialog;
     private GameplayFrameRecorder gameplayFrameRecorder;
     private File latestRecordingFile;
+    private static final int REQUEST_RECORD_AUDIO = 7401;
+    private boolean pendingMicrophoneRecording;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -571,6 +575,46 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
     }
 
     private void startGameplayRecording() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Gameplay recording")
+                    .setItems(new String[]{"Video only", "Video + microphone"}, (dialog, which) -> {
+                        if (which == 0) startGameplayRecording(false);
+                        else requestMicrophoneAndStart();
+                    })
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show();
+        } else {
+            startGameplayRecording(false);
+        }
+    }
+
+    private void requestMicrophoneAndStart() {
+        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                == PackageManager.PERMISSION_GRANTED) {
+            startGameplayRecording(true);
+            return;
+        }
+        pendingMicrophoneRecording = true;
+        requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_RECORD_AUDIO);
+    }
+
+    @Override
+    public void onRequestPermissionsResult(int requestCode, @NonNull String[] permissions,
+                                           @NonNull int[] grantResults) {
+        super.onRequestPermissionsResult(requestCode, permissions, grantResults);
+        if (requestCode == REQUEST_RECORD_AUDIO) {
+            boolean granted = grantResults.length > 0
+                    && grantResults[0] == PackageManager.PERMISSION_GRANTED;
+            boolean shouldStart = pendingMicrophoneRecording;
+            pendingMicrophoneRecording = false;
+            if (granted && shouldStart) startGameplayRecording(true);
+            else Toast.makeText(this, "Microphone permission denied; choose video only to record without audio.",
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void startGameplayRecording(boolean recordMicrophone) {
         if (gameplayFrameRecorder != null && gameplayFrameRecorder.isRecording()) {
             Toast.makeText(this, "A gameplay recording is already active", Toast.LENGTH_SHORT).show();
             return;
@@ -586,8 +630,10 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
                 Toast.makeText(MainActivity.this, "Recording error: " + error.getMessage(),
                         Toast.LENGTH_LONG).show()));
         try {
-            gameplayFrameRecorder.start(latestRecordingFile, 8_000_000, 30);
-            Toast.makeText(this, "Starting gameplay recording. Renderer support is required.",
+            gameplayFrameRecorder.start(latestRecordingFile, 8_000_000, 30, recordMicrophone);
+            Toast.makeText(this, recordMicrophone
+                            ? "Starting gameplay recording with microphone. Renderer support is required."
+                            : "Starting gameplay video recording. Renderer support is required.",
                     Toast.LENGTH_LONG).show();
         } catch (IOException error) {
             Toast.makeText(this, "Could not start recording: " + error.getMessage(),
