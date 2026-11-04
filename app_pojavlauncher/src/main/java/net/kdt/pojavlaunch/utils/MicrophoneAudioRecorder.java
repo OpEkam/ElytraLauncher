@@ -186,13 +186,12 @@ public final class MicrophoneAudioRecorder implements AutoCloseable {
         buffer.clear();
         int bytes = count * 2;
         if (buffer.remaining() < bytes) throw new IOException("AAC input buffer is too small");
-        for (int i = 0; i < count; i++) buffer.put((byte) samples[i]);
-        for (int i = 0; i < count; i++) buffer.put((byte) (samples[i] >>> 8));
-        long elapsedNs = Math.max(0L, System.nanoTime() - pauseStartedNs);
-        long ptsUs = submittedSamples * 1000000L / SAMPLE_RATE;
-        if (pausedSamples > 0L) {
-            ptsUs = Math.max(0L, (System.nanoTime() - pausedSamples) / 1000L);
+        for (int i = 0; i < count; i++) {
+            short sample = samples[i];
+            buffer.put((byte) sample);
+            buffer.put((byte) (sample >>> 8));
         }
+        long ptsUs = submittedSamples * 1000000L / SAMPLE_RATE;
         codec.queueInputBuffer(input, 0, bytes, ptsUs, 0);
         submittedSamples += count;
     }
