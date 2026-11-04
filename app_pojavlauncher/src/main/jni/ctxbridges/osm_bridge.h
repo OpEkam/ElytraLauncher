@@ -25,5 +25,7 @@ void osm_make_current(osm_render_window_t* bundle);
 void osm_swap_buffers();
 void osm_setup_window();
 void osm_swap_interval(int swapInterval);
+void osm_set_frame_capture_enabled(bool enabled);
+bool osm_copy_latest_frame(void* destination, size_t capacity, int* metadata);
 
 #endif //POJAVLAUNCHER_OSM_BRIDGE_H
