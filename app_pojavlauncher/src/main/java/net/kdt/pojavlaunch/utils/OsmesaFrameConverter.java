@@ -118,12 +118,11 @@ public final class OsmesaFrameConverter {
                 int r = 0, g = 0, b = 0;
                 int p0 = row0[x], p1 = row0[x + 1];
                 int p2 = row1[x], p3 = row1[x + 1];
-                int[] pixels = {p0, p1, p2, p3};
-                for (int pixel : pixels) {
-                    r += (pixel >> 16) & 0xff;
-                    g += (pixel >> 8) & 0xff;
-                    b += pixel & 0xff;
-                }
+                r = ((p0 >> 16) & 0xff) + ((p1 >> 16) & 0xff)
+                        + ((p2 >> 16) & 0xff) + ((p3 >> 16) & 0xff);
+                g = ((p0 >> 8) & 0xff) + ((p1 >> 8) & 0xff)
+                        + ((p2 >> 8) & 0xff) + ((p3 >> 8) & 0xff);
+                b = (p0 & 0xff) + (p1 & 0xff) + (p2 & 0xff) + (p3 & 0xff);
                 r = (r + 2) >> 2;
                 g = (g + 2) >> 2;
                 b = (b + 2) >> 2;
