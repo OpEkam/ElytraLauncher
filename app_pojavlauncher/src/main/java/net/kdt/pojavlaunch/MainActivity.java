@@ -28,6 +28,7 @@ import android.graphics.drawable.ColorDrawable;
 import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
+import android.os.Environment;
 import android.os.IBinder;
 import android.util.Log;
 import android.view.InputDevice;
@@ -71,6 +72,7 @@ import net.kdt.pojavlaunch.prefs.LauncherPreferences;
 import net.kdt.pojavlaunch.prefs.QuickSettingSideDialog;
 import net.kdt.pojavlaunch.services.GameService;
 import net.kdt.pojavlaunch.utils.JREUtils;
+import net.kdt.pojavlaunch.utils.GameplayFrameRecorder;
 import net.kdt.pojavlaunch.utils.MCOptionUtils;
 import net.kdt.pojavlaunch.utils.TouchControllerInputView;
 import net.kdt.pojavlaunch.utils.TouchControllerUtils;
@@ -121,6 +123,8 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
     private GameService.LocalBinder mServiceBinder;
 
     private QuickSettingSideDialog mQuickSettingSideDialog;
+    private GameplayFrameRecorder gameplayFrameRecorder;
+    private File latestRecordingFile;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -260,8 +264,13 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
 
 
             // Menu
+            List<String> gameActions = new java.util.ArrayList<>(
+                    java.util.Arrays.asList(getResources().getStringArray(R.array.menu_ingame)));
+            gameActions.add("Start gameplay recording");
+            gameActions.add("Pause / resume recording");
+            gameActions.add("Stop gameplay recording");
             gameActionArrayAdapter = new ArrayAdapter<>(this,
-                    android.R.layout.simple_list_item_1, getResources().getStringArray(R.array.menu_ingame));
+                    android.R.layout.simple_list_item_1, gameActions);
             gameActionClickListener = (parent, view, position, id) -> {
                 switch(position) {
                     case 0: dialogForceClose(MainActivity.this); break;
@@ -269,6 +278,9 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
                     case 2: dialogSendCustomKey(); break;
                     case 3: openQuickSettings(); break;
                     case 4: openCustomControls(); break;
+                    case 5: startGameplayRecording(); break;
+                    case 6: toggleGameplayRecordingPause(); break;
+                    case 7: stopGameplayRecording(); break;
                 }
                 drawerLayout.closeDrawers();
             };
@@ -381,6 +393,11 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
 
     @Override
     protected void onDestroy() {
+        if (gameplayFrameRecorder != null) {
+            try { gameplayFrameRecorder.stop(); }
+            catch (IOException error) { Log.w(TAG, "Unable to finalize gameplay recording", error); }
+            gameplayFrameRecorder = null;
+        }
         super.onDestroy();
         CallbackBridge.removeGrabListener(touchpad);
         CallbackBridge.removeGrabListener(minecraftGLView);
@@ -551,6 +568,60 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
         navDrawer.setOnItemClickListener(ingameControlsEditorListener);
         mDrawerPullButton.setVisibility(View.VISIBLE);
         isInEditor = true;
+    }
+
+    private void startGameplayRecording() {
+        if (gameplayFrameRecorder != null && gameplayFrameRecorder.isRecording()) {
+            Toast.makeText(this, "A gameplay recording is already active", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        File movies = getExternalFilesDir(Environment.DIRECTORY_MOVIES);
+        if (movies == null) {
+            Toast.makeText(this, "Recording storage is unavailable", Toast.LENGTH_LONG).show();
+            return;
+        }
+        latestRecordingFile = new File(movies,
+                "ElytraGameplay-" + System.currentTimeMillis() + ".mp4");
+        gameplayFrameRecorder = new GameplayFrameRecorder(error -> runOnUiThread(() ->
+                Toast.makeText(MainActivity.this, "Recording error: " + error.getMessage(),
+                        Toast.LENGTH_LONG).show()));
+        try {
+            gameplayFrameRecorder.start(latestRecordingFile, 8_000_000, 30);
+            Toast.makeText(this, "Starting gameplay recording. Renderer support is required.",
+                    Toast.LENGTH_LONG).show();
+        } catch (IOException error) {
+            Toast.makeText(this, "Could not start recording: " + error.getMessage(),
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void toggleGameplayRecordingPause() {
+        if (gameplayFrameRecorder == null || !gameplayFrameRecorder.isRecording()) {
+            Toast.makeText(this, "No active gameplay recording", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        if (gameplayFrameRecorder.isPaused()) {
+            gameplayFrameRecorder.resume();
+            Toast.makeText(this, "Recording resumed", Toast.LENGTH_SHORT).show();
+        } else {
+            gameplayFrameRecorder.pause();
+            Toast.makeText(this, "Recording paused", Toast.LENGTH_SHORT).show();
+        }
+    }
+
+    private void stopGameplayRecording() {
+        if (gameplayFrameRecorder == null) {
+            Toast.makeText(this, "No active gameplay recording", Toast.LENGTH_SHORT).show();
+            return;
+        }
+        try {
+            gameplayFrameRecorder.stop();
+            Toast.makeText(this, "Recording saved: " + latestRecordingFile.getAbsolutePath(),
+                    Toast.LENGTH_LONG).show();
+        } catch (IOException error) {
+            Toast.makeText(this, "Could not finalize recording: " + error.getMessage(),
+                    Toast.LENGTH_LONG).show();
+        }
     }
 
     private void openLogOutput() {
