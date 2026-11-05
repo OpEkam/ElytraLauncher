@@ -192,8 +192,13 @@ public class NewJREUtil {
             }
             Log.i("NewJREAuto", "No Java 8 runtime found; starting automatic installation");
             tryDownloadRuntime(context, 8);
-            Log.i("NewJREAuto", "Automatic Java 8 installation completed");
-        } catch (RuntimeException e) {
+            String installedName = MultiRTUtils.getExactJreName(8);
+            if (installedName == null) {
+                throw new RuntimeException("Java 8 download finished but no Java 8 runtime was detected");
+            }
+            Log.i("NewJREAuto", "Automatic Java 8 installation completed: " + installedName);
+        } catch (Throwable e) {
+            // Keep launcher startup alive, but make failures visible in the launcher log.
             Log.e("NewJREAuto", "Automatic Java 8 installation failed", e);
         }
     }
