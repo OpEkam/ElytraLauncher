@@ -1,6 +1,7 @@
 package net.kdt.pojavlaunch.utils;
 
 import android.graphics.Bitmap;
+import android.media.projection.MediaProjection;
 import android.util.Log;
 import android.view.View;
 
@@ -32,10 +33,10 @@ public final class GameplayFrameRecorder implements AutoCloseable {
     private int frameRate;
     private IOException workerFailure;
     private I420VideoEncoder encoder;
-    private MicrophoneAudioRecorder microphoneRecorder;
+    private GameplayAudioRecorder gameplayAudioRecorder;
     private File videoTempFile;
     private File audioTempFile;
-    private boolean includeMicrophone;
+    private boolean includeAudio;
     private View captureView;
 
     public GameplayFrameRecorder(Listener listener) {
@@ -53,31 +54,38 @@ public final class GameplayFrameRecorder implements AutoCloseable {
         start(output, requestedBitRate, requestedFrameRate, null, recordMicrophone);
     }
 
-    /** Starts recording from the renderer's game-only Android surface when supported. */
+    /** Starts recording from the renderer surface with optional mixed game and microphone audio. */
     public void start(File output, int requestedBitRate, int requestedFrameRate,
                       View rendererSurface, boolean recordMicrophone) throws IOException {
+        start(output, requestedBitRate, requestedFrameRate, rendererSurface, recordMicrophone, null);
+    }
+
+    /** Starts capture using a user-approved MediaProjection for Android playback audio. */
+    public void start(File output, int requestedBitRate, int requestedFrameRate,
+                      View rendererSurface, boolean recordMicrophone,
+                      MediaProjection projection) throws IOException {
         if (output == null || requestedBitRate < 1 || requestedFrameRate < 1) {
             throw new IllegalArgumentException("Output file and valid encoding settings are required");
         }
         synchronized (stateLock) {
             if (running || worker != null) throw new IllegalStateException("Recorder is already active");
             outputFile = output;
-            includeMicrophone = recordMicrophone;
+            includeAudio = recordMicrophone || projection != null;
             captureView = rendererSurface;
-            videoTempFile = recordMicrophone
+            videoTempFile = includeAudio
                     ? new File(output.getParentFile(), output.getName() + ".video.mp4") : output;
-            audioTempFile = recordMicrophone
+            audioTempFile = includeAudio
                     ? new File(output.getParentFile(), output.getName() + ".audio.mp4") : null;
-            if (recordMicrophone) {
-                microphoneRecorder = new MicrophoneAudioRecorder();
+            if (includeAudio) {
+                gameplayAudioRecorder = new GameplayAudioRecorder();
                 try {
-                    microphoneRecorder.start(audioTempFile);
+                    gameplayAudioRecorder.start(audioTempFile, projection, recordMicrophone);
                 } catch (IOException error) {
-                    microphoneRecorder = null;
+                    gameplayAudioRecorder = null;
                     throw error;
                 } catch (RuntimeException error) {
-                    microphoneRecorder = null;
-                    throw new IOException("Could not start microphone recording", error);
+                    gameplayAudioRecorder = null;
+                    throw new IOException("Could not start gameplay audio recording", error);
                 }
             }
             bitRate = requestedBitRate;
@@ -96,7 +104,7 @@ public final class GameplayFrameRecorder implements AutoCloseable {
         synchronized (stateLock) {
             if (running) {
                 paused = true;
-                if (microphoneRecorder != null) microphoneRecorder.pause();
+                if (gameplayAudioRecorder != null) gameplayAudioRecorder.pause();
             }
         }
     }
@@ -105,7 +113,7 @@ public final class GameplayFrameRecorder implements AutoCloseable {
         synchronized (stateLock) {
             if (running) {
                 paused = false;
-                if (microphoneRecorder != null) microphoneRecorder.resume();
+                if (gameplayAudioRecorder != null) gameplayAudioRecorder.resume();
             }
         }
     }
@@ -253,19 +261,19 @@ public final class GameplayFrameRecorder implements AutoCloseable {
                 }
                 encoder = null;
             }
-            if (microphoneRecorder != null) {
-                try { microphoneRecorder.stop(); }
+            if (gameplayAudioRecorder != null) {
+                try { gameplayAudioRecorder.stop(); }
                 catch (IOException e) {
                     if (workerFailure == null) workerFailure = e;
-                    else Log.e(TAG, "Microphone finalization also failed", e);
+                    else Log.e(TAG, "Audio finalization also failed", e);
                 }
-                microphoneRecorder = null;
+                gameplayAudioRecorder = null;
             }
-            if (includeMicrophone && workerFailure == null) {
+            if (includeAudio && workerFailure == null) {
                 try { Mp4TrackMuxer.combine(videoTempFile, audioTempFile, outputFile); }
                 catch (IOException e) { workerFailure = e; }
             }
-            if (includeMicrophone) {
+            if (includeAudio) {
                 if (videoTempFile != null) videoTempFile.delete();
                 if (audioTempFile != null) audioTempFile.delete();
             }
