@@ -520,7 +520,14 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
         // FIXME: Automatic detection should be based on provided hint GLFW_CONTEXT_VERSION_MAJOR and GLFW_CONTEXT_VERSION_MINOR
         // Autoselect renderer
         boolean hasAngelica = hasMods("angelica");
-        if (Tools.LOCAL_RENDERER == null) Tools.LOCAL_RENDERER = "opengles_mobileglues";
+        if (Tools.LOCAL_RENDERER == null) {
+            // Choose a safe default renderer on the first launch and save it to
+            // the selected profile so it remains selected on later launches.
+            Tools.LOCAL_RENDERER = "opengles_mobileglues";
+            minecraftProfile.pojavRendererName = Tools.LOCAL_RENDERER;
+            LauncherProfiles.write();
+            Log.i("runCraft", "Saved default renderer: " + Tools.LOCAL_RENDERER);
+        }
         // Angelica IS the FPE emulator
         if (hasAngelica) Tools.useSFPEW = false;
 
