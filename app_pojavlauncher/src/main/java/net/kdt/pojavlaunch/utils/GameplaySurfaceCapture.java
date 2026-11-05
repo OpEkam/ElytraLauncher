@@ -1,11 +1,16 @@
 package net.kdt.pojavlaunch.utils;
 
+import android.app.Activity;
+import android.content.Context;
+import android.content.ContextWrapper;
 import android.graphics.Bitmap;
+import android.graphics.Rect;
 import android.os.Handler;
 import android.os.Looper;
 import android.view.PixelCopy;
 import android.view.SurfaceView;
 import android.view.TextureView;
+import android.view.Window;
 import android.view.View;
 import android.util.Log;
 
@@ -65,6 +70,9 @@ public final class GameplaySurfaceCapture implements AutoCloseable {
                         + result[0] + ")");
             }
             logFrameSample("SurfaceView", bitmap);
+            if (isNearlyBlack(bitmap) && captureWindowComposite()) {
+                Log.w(TAG, "SurfaceView PixelCopy was black; using cropped window capture");
+            }
             return bitmap;
         }
 
@@ -85,9 +93,80 @@ public final class GameplaySurfaceCapture implements AutoCloseable {
                 throw new IOException("Could not copy Minecraft TextureView");
             }
             logFrameSample("TextureView", bitmap);
+            if (isNearlyBlack(bitmap) && captureWindowComposite()) {
+                Log.w(TAG, "TextureView bitmap was black; using cropped window capture");
+            }
             return bitmap;
         }
         throw new IOException("Unsupported Minecraft rendering surface");
+    }
+
+    /**
+     * Some Android GPU/renderer combinations return an all-black bitmap when
+     * copying the individual game surface. Detect that case and retry from the
+     * containing window, cropped to the exact Minecraft surface bounds.
+     */
+    private boolean captureWindowComposite() throws IOException, InterruptedException {
+        if (android.os.Build.VERSION.SDK_INT < 26) return false;
+        Activity activity = findActivity(source.getContext());
+        if (activity == null) return false;
+
+        final Rect[] sourceRect = new Rect[1];
+        final CountDownLatch rectLatch = new CountDownLatch(1);
+        Runnable readRect = () -> {
+            int[] location = new int[2];
+            source.getLocationInWindow(location);
+            sourceRect[0] = new Rect(location[0], location[1],
+                    location[0] + bitmap.getWidth(), location[1] + bitmap.getHeight());
+            rectLatch.countDown();
+        };
+        if (Looper.myLooper() == Looper.getMainLooper()) readRect.run();
+        else if (!source.post(readRect)) return false;
+        if (!rectLatch.await(1500L, TimeUnit.MILLISECONDS) || sourceRect[0] == null) return false;
+
+        final CountDownLatch copyLatch = new CountDownLatch(1);
+        final int[] result = new int[]{PixelCopy.ERROR_UNKNOWN};
+        PixelCopy.request(activity.getWindow(), sourceRect[0], bitmap, copyResult -> {
+            result[0] = copyResult;
+            copyLatch.countDown();
+        }, mainHandler);
+        if (!copyLatch.await(1500L, TimeUnit.MILLISECONDS) || result[0] != PixelCopy.SUCCESS) {
+            Log.w(TAG, "Cropped window PixelCopy failed: " + result[0]);
+            return false;
+        }
+        logFrameSample("Window-cropped fallback", bitmap);
+        return !isNearlyBlack(bitmap);
+    }
+
+    private static Activity findActivity(Context context) {
+        Context current = context;
+        while (current instanceof ContextWrapper) {
+            if (current instanceof Activity) return (Activity) current;
+            current = ((ContextWrapper) current).getBaseContext();
+        }
+        return current instanceof Activity ? (Activity) current : null;
+    }
+
+    private static boolean isNearlyBlack(Bitmap frame) {
+        int width = frame.getWidth();
+        int height = frame.getHeight();
+        int stepX = Math.max(1, width / 16);
+        int stepY = Math.max(1, height / 16);
+        long total = 0L;
+        int brightest = 0;
+        int samples = 0;
+        for (int y = 0; y < height; y += stepY) {
+            for (int x = 0; x < width; x += stepX) {
+                int pixel = frame.getPixel(x, y);
+                int luma = (((pixel >> 16) & 0xff) * 30
+                        + ((pixel >> 8) & 0xff) * 59
+                        + (pixel & 0xff) * 11) / 100;
+                total += luma;
+                brightest = Math.max(brightest, luma);
+                samples++;
+            }
+        }
+        return samples > 0 && total / samples < 2 && brightest < 8;
     }
 
     private static void logFrameSample(String type, Bitmap frame) {
