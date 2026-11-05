@@ -1,6 +1,7 @@
 package net.kdt.pojavlaunch.utils;
 
 import android.graphics.Bitmap;
+import android.graphics.Canvas;
 import android.media.projection.MediaProjection;
 import android.util.Log;
 import android.view.View;
@@ -293,45 +294,88 @@ public final class GameplayFrameRecorder implements AutoCloseable {
      */
     private void captureSurfaceFrames() throws IOException, InterruptedException {
         try (GameplaySurfaceCapture capture = GameplaySurfaceCapture.create(captureView)) {
-            Bitmap firstFrame = capture.capture();
+            Bitmap firstFrame = null;
+            IOException firstFrameError = null;
+            long firstFrameDeadline = System.currentTimeMillis() + 5000L;
+            while (!stopRequested && firstFrame == null
+                    && System.currentTimeMillis() < firstFrameDeadline) {
+                try {
+                    firstFrame = capture.capture();
+                } catch (IOException error) {
+                    firstFrameError = error;
+                    Thread.sleep(100L);
+                }
+            }
+            if (firstFrame == null) {
+                throw new IOException("Could not obtain a valid Minecraft frame from this renderer surface",
+                        firstFrameError);
+            }
+
             int width = firstFrame.getWidth() & ~1;
             int height = firstFrame.getHeight() & ~1;
             if (width < 2 || height < 2) {
                 throw new IOException("Minecraft surface returned an invalid frame size");
             }
-            ByteBuffer i420 = ByteBuffer.allocateDirect(width * height * 3 / 2);
-            encoder = new I420VideoEncoder();
-            encoder.start(videoTempFile, width, height, bitRate, frameRate);
+            Bitmap lastGoodFrame = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
+            Canvas frameCacheCanvas = new Canvas(lastGoodFrame);
+            frameCacheCanvas.drawBitmap(firstFrame, 0f, 0f, null);
 
-            long startNs = System.nanoTime();
-            long pausedAtNs = 0L;
-            long pausedTotalNs = 0L;
-            long lastSubmitNs = 0L;
-            long frameIntervalNs = 1_000_000_000L / Math.max(1, frameRate);
+            try {
+                ByteBuffer i420 = ByteBuffer.allocateDirect(width * height * 3 / 2);
+                encoder = new I420VideoEncoder();
+                encoder.start(videoTempFile, width, height, bitRate, frameRate);
 
-            while (!stopRequested) {
-                if (paused) {
-                    if (pausedAtNs == 0L) pausedAtNs = System.nanoTime();
-                    Thread.sleep(15L);
-                    continue;
-                }
-                if (pausedAtNs != 0L) {
-                    pausedTotalNs += System.nanoTime() - pausedAtNs;
-                    pausedAtNs = 0L;
-                }
-                long now = System.nanoTime();
-                if (now - lastSubmitNs < frameIntervalNs) {
-                    Thread.sleep(2L);
-                    continue;
-                }
+                long startNs = System.nanoTime();
+                long pausedAtNs = 0L;
+                long pausedTotalNs = 0L;
+                long lastSubmitNs = 0L;
+                long frameIntervalNs = 1_000_000_000L / Math.max(1, frameRate);
+                int consecutiveCaptureFailures = 0;
 
-                Bitmap frame = capture.capture();
-                i420.clear();
-                OsmesaFrameConverter.bitmapToI420(frame, width, height, i420);
-                i420.flip();
-                long ptsUs = Math.max(0L, (now - startNs - pausedTotalNs) / 1000L);
-                encoder.encodeFrame(i420, ptsUs);
-                lastSubmitNs = now;
+                while (!stopRequested) {
+                    if (paused) {
+                        if (pausedAtNs == 0L) pausedAtNs = System.nanoTime();
+                        Thread.sleep(15L);
+                        continue;
+                    }
+                    if (pausedAtNs != 0L) {
+                        pausedTotalNs += System.nanoTime() - pausedAtNs;
+                        pausedAtNs = 0L;
+                    }
+                    long now = System.nanoTime();
+                    if (now - lastSubmitNs < frameIntervalNs) {
+                        Thread.sleep(2L);
+                        continue;
+                    }
+
+                    Bitmap frame;
+                    try {
+                        frame = capture.capture();
+                        frameCacheCanvas.drawBitmap(frame, 0f, 0f, null);
+                        consecutiveCaptureFailures = 0;
+                    } catch (IOException captureError) {
+                        consecutiveCaptureFailures++;
+                        if (consecutiveCaptureFailures >= 60) {
+                            throw new IOException("Minecraft surface has stopped providing valid frames for about two seconds",
+                                    captureError);
+                        }
+                        if (consecutiveCaptureFailures == 1 || consecutiveCaptureFailures % 30 == 0) {
+                            Log.w(TAG, "Skipping invalid renderer frame; reusing last valid frame ("
+                                    + consecutiveCaptureFailures + " consecutive failures)", captureError);
+                        }
+                        // Keep the video stream valid without recording black frames or the
+                        // whole launcher window (which would include touch controls).
+                        frame = lastGoodFrame;
+                    }
+                    i420.clear();
+                    OsmesaFrameConverter.bitmapToI420(frame, width, height, i420);
+                    i420.flip();
+                    long ptsUs = Math.max(0L, (now - startNs - pausedTotalNs) / 1000L);
+                    encoder.encodeFrame(i420, ptsUs);
+                    lastSubmitNs = now;
+                }
+            } finally {
+                if (!lastGoodFrame.isRecycled()) lastGoodFrame.recycle();
             }
         }
     }
