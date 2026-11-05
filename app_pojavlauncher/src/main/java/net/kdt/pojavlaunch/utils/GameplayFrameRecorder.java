@@ -10,9 +10,9 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 
 /**
- * Pulls OSMesa gameplay snapshots off the render thread, converts them to I420,
- * and writes an H.264 MP4. This currently supports the VK_ZINK/OSMesa capture
- * path only; unsupported renderers fail before recording begins.
+ * Captures Minecraft frames from its renderer surface where Android exposes a
+ * capturable SurfaceView/TextureView, with the native OSMesa frame path as a
+ * fallback. Encodes the frames as H.264 and optionally muxes captured audio.
  */
 public final class GameplayFrameRecorder implements AutoCloseable {
     public interface Listener {
@@ -185,7 +185,7 @@ public final class GameplayFrameRecorder implements AutoCloseable {
                 Thread.sleep(30L);
             }
             if (info[0] <= 1 || info[1] <= 1 || info[2] < info[0]) {
-                throw new IOException("No OSMesa gameplay frames received; select the VK_ZINK renderer");
+                throw new IOException("No gameplay frames received from this renderer; its surface may not support capture");
             }
             frameWidth = info[0] & ~1;
             frameHeight = info[1] & ~1;
