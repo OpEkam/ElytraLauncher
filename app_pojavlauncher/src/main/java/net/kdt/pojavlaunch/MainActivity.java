@@ -471,6 +471,7 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
             if (resultCode == Activity.RESULT_OK && data != null) {
                 startProjectionService(resultCode, data);
             } else {
+                pendingSystemAudioRecording = false;
                 pendingSystemAudioMicrophone = false;
                 Toast.makeText(this, "Gameplay audio permission was not granted", Toast.LENGTH_SHORT).show();
             }
@@ -648,6 +649,7 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
                 != PackageManager.PERMISSION_GRANTED) {
             pendingSystemAudioRecording = true;
             pendingSystemAudioMicrophone = true;
+            pendingMicrophoneRecording = true;
             requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_RECORD_AUDIO);
             return;
         }
