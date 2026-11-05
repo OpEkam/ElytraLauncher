@@ -347,6 +347,12 @@ public class LauncherActivity extends BaseActivity {
         mProgressLayout.observe(ProgressLayout.INSTALL_MODPACK);
         mProgressLayout.observe(ProgressLayout.AUTHENTICATE_MICROSOFT);
         mProgressLayout.observe(ProgressLayout.DOWNLOAD_VERSION_LIST);
+
+        // Restore the baseline Java 8 runtime automatically on first launch.
+        // Java 17/21/25 are still installed later when a Minecraft version needs them.
+        PojavApplication.sExecutorService.execute(() ->
+                NewJREUtil.installDefaultRuntimeIfMissing(getApplicationContext()));
+
     }
 
     @Override
