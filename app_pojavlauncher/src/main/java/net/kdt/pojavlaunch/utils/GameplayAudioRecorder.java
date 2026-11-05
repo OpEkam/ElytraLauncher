@@ -184,8 +184,12 @@ public final class GameplayAudioRecorder implements AutoCloseable {
                         : playbackRecord.read(playback, 0, BLOCK_SAMPLES);
                 int microphoneCount = microphoneRecord == null ? -1
                         : microphoneRecord.read(microphone, 0, BLOCK_SAMPLES);
-                if (playbackCount < 0) throw new IOException("Game-audio capture read failed: " + playbackCount);
-                if (microphoneCount < 0) throw new IOException("Microphone read failed: " + microphoneCount);
+                if (playbackRecord != null && playbackCount < 0) {
+                    throw new IOException("Game-audio capture read failed: " + playbackCount);
+                }
+                if (microphoneRecord != null && microphoneCount < 0) {
+                    throw new IOException("Microphone read failed: " + microphoneCount);
+                }
                 int count = playbackRecord == null ? microphoneCount
                         : microphoneRecord == null ? playbackCount
                         : Math.min(playbackCount, microphoneCount);
