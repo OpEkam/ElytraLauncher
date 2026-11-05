@@ -7,6 +7,7 @@ import android.view.PixelCopy;
 import android.view.SurfaceView;
 import android.view.TextureView;
 import android.view.View;
+import android.util.Log;
 
 import java.io.IOException;
 import java.util.concurrent.CountDownLatch;
@@ -18,6 +19,7 @@ import java.util.concurrent.TimeUnit;
  * of the recorded frames.
  */
 public final class GameplaySurfaceCapture implements AutoCloseable {
+    private static final String TAG = "GameplaySurfaceCapture";
     private final View source;
     private final Bitmap bitmap;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
@@ -62,6 +64,7 @@ public final class GameplaySurfaceCapture implements AutoCloseable {
                 throw new IOException("PixelCopy could not capture the game surface (code "
                         + result[0] + ")");
             }
+            logFrameSample("SurfaceView", bitmap);
             return bitmap;
         }
 
@@ -70,8 +73,8 @@ public final class GameplaySurfaceCapture implements AutoCloseable {
             final boolean[] success = new boolean[1];
             Runnable copy = () -> {
                 try {
-                    ((TextureView) source).getBitmap(bitmap);
-                    success[0] = true;
+                    Bitmap captured = ((TextureView) source).getBitmap(bitmap);
+                    success[0] = captured != null;
                 } finally {
                     latch.countDown();
                 }
@@ -81,9 +84,34 @@ public final class GameplaySurfaceCapture implements AutoCloseable {
             if (!latch.await(1500L, TimeUnit.MILLISECONDS) || !success[0]) {
                 throw new IOException("Could not copy Minecraft TextureView");
             }
+            logFrameSample("TextureView", bitmap);
             return bitmap;
         }
         throw new IOException("Unsupported Minecraft rendering surface");
+    }
+
+    private static void logFrameSample(String type, Bitmap frame) {
+        int width = frame.getWidth();
+        int height = frame.getHeight();
+        int stepX = Math.max(1, width / 16);
+        int stepY = Math.max(1, height / 16);
+        long luminanceTotal = 0L;
+        int brightest = 0;
+        int samples = 0;
+        for (int y = 0; y < height; y += stepY) {
+            for (int x = 0; x < width; x += stepX) {
+                int pixel = frame.getPixel(x, y);
+                int luminance = (((pixel >> 16) & 0xff) * 30
+                        + ((pixel >> 8) & 0xff) * 59
+                        + (pixel & 0xff) * 11) / 100;
+                luminanceTotal += luminance;
+                brightest = Math.max(brightest, luminance);
+                samples++;
+            }
+        }
+        int average = samples == 0 ? 0 : (int) (luminanceTotal / samples);
+        Log.i(TAG, type + " frame sample: averageLuma=" + average
+                + ", brightestLuma=" + brightest + ", samples=" + samples);
     }
 
     @Override
