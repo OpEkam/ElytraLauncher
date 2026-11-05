@@ -180,7 +180,7 @@ public class NewJREUtil {
      * not already present. Newer Java versions are installed on demand when
      * the selected Minecraft version requires them.
      */
-    public static void installDefaultRuntimeIfMissing(Context context) {
+    public static synchronized void installDefaultRuntimeIfMissing(Context context) {
         try {
             if (MultiRTUtils.getExactJreName(8) != null) {
                 Log.i("NewJREAuto", "Java 8 runtime is already installed");
