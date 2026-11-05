@@ -30,6 +30,7 @@
     <application
         android:name=".PojavApplication"
         android:allowBackup="true"
+        android:allowAudioPlaybackCapture="true"
         android:allowNativeHeapPointerTagging="false"
         android:appCategory="game"
         android:hasFragileUserData="true"
