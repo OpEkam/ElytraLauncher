@@ -22,6 +22,8 @@ import android.content.ComponentName;
 import android.content.Context;
 import android.content.Intent;
 import android.content.pm.PackageManager;
+import android.media.projection.MediaProjection;
+import android.media.projection.MediaProjectionManager;
 import android.content.ServiceConnection;
 import android.content.res.Configuration;
 import android.graphics.Color;
@@ -73,6 +75,7 @@ import net.kdt.pojavlaunch.lifecycle.ContextExecutor;
 import net.kdt.pojavlaunch.prefs.LauncherPreferences;
 import net.kdt.pojavlaunch.prefs.QuickSettingSideDialog;
 import net.kdt.pojavlaunch.services.GameService;
+import net.kdt.pojavlaunch.services.GameplayMediaProjectionService;
 import net.kdt.pojavlaunch.utils.JREUtils;
 import net.kdt.pojavlaunch.utils.GameplayFrameRecorder;
 import net.kdt.pojavlaunch.utils.MCOptionUtils;
@@ -128,7 +131,33 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
     private GameplayFrameRecorder gameplayFrameRecorder;
     private File latestRecordingFile;
     private static final int REQUEST_RECORD_AUDIO = 7401;
+    private static final int REQUEST_MEDIA_PROJECTION = 7403;
     private boolean pendingMicrophoneRecording;
+    private boolean pendingSystemAudioRecording;
+    private boolean pendingSystemAudioMicrophone;
+    private GameplayMediaProjectionService projectionService;
+    private boolean projectionServiceBound;
+
+    private final ServiceConnection projectionServiceConnection = new ServiceConnection() {
+        @Override
+        public void onServiceConnected(ComponentName name, IBinder binder) {
+            projectionService = ((GameplayMediaProjectionService.LocalBinder) binder).getService();
+            MediaProjection projection = projectionService.getProjection();
+            if (projection == null) {
+                Toast.makeText(MainActivity.this,
+                        "Android did not grant gameplay audio capture. Try again.", Toast.LENGTH_LONG).show();
+                releaseProjectionService();
+                return;
+            }
+            startGameplayRecording(pendingSystemAudioMicrophone, projection);
+        }
+
+        @Override
+        public void onServiceDisconnected(ComponentName name) {
+            projectionService = null;
+            projectionServiceBound = false;
+        }
+    };
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -402,6 +431,7 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
             catch (IOException error) { Log.w(TAG, "Unable to finalize gameplay recording", error); }
             gameplayFrameRecorder = null;
         }
+        releaseProjectionService();
         super.onDestroy();
         CallbackBridge.removeGrabListener(touchpad);
         CallbackBridge.removeGrabListener(minecraftGLView);
@@ -436,6 +466,16 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
     @Override
     protected void onActivityResult(int requestCode, int resultCode, Intent data) {
         super.onActivityResult(requestCode, resultCode, data);
+
+        if (requestCode == REQUEST_MEDIA_PROJECTION) {
+            if (resultCode == Activity.RESULT_OK && data != null) {
+                startProjectionService(resultCode, data);
+            } else {
+                pendingSystemAudioMicrophone = false;
+                Toast.makeText(this, "Gameplay audio permission was not granted", Toast.LENGTH_SHORT).show();
+            }
+            return;
+        }
 
         if (requestCode == 1 && resultCode == Activity.RESULT_OK) {
             // Reload PREF_DEFAULTCTRL_PATH
@@ -575,7 +615,23 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
     }
 
     private void startGameplayRecording() {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+            new AlertDialog.Builder(this)
+                    .setTitle("Gameplay recording")
+                    .setItems(new String[]{
+                            "Video only",
+                            "Video + microphone",
+                            "Video + game audio",
+                            "Video + game audio + microphone"
+                    }, (dialog, which) -> {
+                        if (which == 0) startGameplayRecording(false);
+                        else if (which == 1) requestMicrophoneAndStart();
+                        else if (which == 2) requestSystemAudioAndStart(false);
+                        else requestSystemAudioAndStart(true);
+                    })
+                    .setNegativeButton(android.R.string.cancel, null)
+                    .show();
+        } else {
             new AlertDialog.Builder(this)
                     .setTitle("Gameplay recording")
                     .setItems(new String[]{"Video only", "Video + microphone"}, (dialog, which) -> {
@@ -584,9 +640,53 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
                     })
                     .setNegativeButton(android.R.string.cancel, null)
                     .show();
-        } else {
-            startGameplayRecording(false);
         }
+    }
+
+    private void requestSystemAudioAndStart(boolean withMicrophone) {
+        if (withMicrophone && ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO)
+                != PackageManager.PERMISSION_GRANTED) {
+            pendingSystemAudioRecording = true;
+            pendingSystemAudioMicrophone = true;
+            requestPermissions(new String[]{Manifest.permission.RECORD_AUDIO}, REQUEST_RECORD_AUDIO);
+            return;
+        }
+        pendingSystemAudioMicrophone = withMicrophone;
+        MediaProjectionManager manager = (MediaProjectionManager)
+                getSystemService(Context.MEDIA_PROJECTION_SERVICE);
+        if (manager == null) {
+            Toast.makeText(this, "Android gameplay audio capture is unavailable", Toast.LENGTH_LONG).show();
+            return;
+        }
+        startActivityForResult(manager.createScreenCaptureIntent(), REQUEST_MEDIA_PROJECTION);
+    }
+
+    private void startProjectionService(int resultCode, Intent resultData) {
+        Intent serviceIntent = new Intent(this, GameplayMediaProjectionService.class)
+                .putExtra(GameplayMediaProjectionService.EXTRA_RESULT_CODE, resultCode)
+                .putExtra(GameplayMediaProjectionService.EXTRA_RESULT_DATA, resultData);
+        try {
+            ContextCompat.startForegroundService(this, serviceIntent);
+            projectionServiceBound = bindService(serviceIntent, projectionServiceConnection,
+                    Context.BIND_AUTO_CREATE);
+            if (!projectionServiceBound) {
+                stopService(serviceIntent);
+                Toast.makeText(this, "Could not connect to gameplay audio service", Toast.LENGTH_LONG).show();
+            }
+        } catch (RuntimeException error) {
+            Toast.makeText(this, "Could not start gameplay audio service: " + error.getMessage(),
+                    Toast.LENGTH_LONG).show();
+        }
+    }
+
+    private void releaseProjectionService() {
+        if (projectionServiceBound) {
+            try { unbindService(projectionServiceConnection); }
+            catch (IllegalArgumentException ignored) {}
+            projectionServiceBound = false;
+        }
+        projectionService = null;
+        stopService(new Intent(this, GameplayMediaProjectionService.class));
     }
 
     private void requestMicrophoneAndStart() {
@@ -608,13 +708,27 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
                     && grantResults[0] == PackageManager.PERMISSION_GRANTED;
             boolean shouldStart = pendingMicrophoneRecording;
             pendingMicrophoneRecording = false;
-            if (granted && shouldStart) startGameplayRecording(true);
-            else Toast.makeText(this, "Microphone permission denied; choose video only to record without audio.",
-                    Toast.LENGTH_LONG).show();
+            if (granted && shouldStart) {
+                if (pendingSystemAudioRecording) {
+                    pendingSystemAudioRecording = false;
+                    requestSystemAudioAndStart(pendingSystemAudioMicrophone);
+                } else {
+                    startGameplayRecording(true);
+                }
+            } else {
+                pendingSystemAudioRecording = false;
+                pendingSystemAudioMicrophone = false;
+                Toast.makeText(this, "Microphone permission denied; choose a mode without microphone audio.",
+                        Toast.LENGTH_LONG).show();
+            }
         }
     }
 
     private void startGameplayRecording(boolean recordMicrophone) {
+        startGameplayRecording(recordMicrophone, null);
+    }
+
+    private void startGameplayRecording(boolean recordMicrophone, MediaProjection projection) {
         if (gameplayFrameRecorder != null && gameplayFrameRecorder.isRecording()) {
             Toast.makeText(this, "A gameplay recording is already active", Toast.LENGTH_SHORT).show();
             return;
@@ -631,14 +745,17 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
                         Toast.LENGTH_LONG).show()));
         try {
             gameplayFrameRecorder.start(latestRecordingFile, 8_000_000, 30,
-                    minecraftGLView.mSurface, recordMicrophone);
-            Toast.makeText(this, recordMicrophone
-                            ? "Starting gameplay recording with microphone. Renderer support is required."
-                            : "Starting gameplay video recording. Renderer support is required.",
+                    minecraftGLView.mSurface, recordMicrophone, projection);
+            Toast.makeText(this, projection != null
+                            ? (recordMicrophone ? "Starting gameplay recording with game audio and microphone."
+                                    : "Starting gameplay recording with game audio.")
+                            : (recordMicrophone ? "Starting gameplay recording with microphone."
+                                    : "Starting gameplay video recording."),
                     Toast.LENGTH_LONG).show();
         } catch (IOException error) {
             Toast.makeText(this, "Could not start recording: " + error.getMessage(),
                     Toast.LENGTH_LONG).show();
+            if (projection != null) releaseProjectionService();
         }
     }
 
@@ -665,6 +782,7 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
             gameplayFrameRecorder.stop();
             Toast.makeText(this, "Recording saved: " + latestRecordingFile.getAbsolutePath(),
                     Toast.LENGTH_LONG).show();
+            releaseProjectionService();
         } catch (IOException error) {
             Toast.makeText(this, "Could not finalize recording: " + error.getMessage(),
                     Toast.LENGTH_LONG).show();
