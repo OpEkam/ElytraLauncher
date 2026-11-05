@@ -41,7 +41,7 @@ def getVersionName = {
             return ("LOCAL-" + "${getDate()}")
         }else {
             // Used by github actions
-            TAG_STRING =  'amethyst-legacy-' + "${getDate()}" + "-" + TAG_PART_COMMIT.toString().trim()
+            TAG_STRING =  'ElytraLauncher-' + "${getDate()}" + "-" + TAG_PART_COMMIT.toString().trim()
         }
 
     }
