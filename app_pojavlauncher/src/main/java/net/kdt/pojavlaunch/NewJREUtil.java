@@ -175,6 +175,29 @@ public class NewJREUtil {
                 activity.getString(R.string.multirt_nocompatiblert, verInfo.javaVersion.majorVersion));
     }
 
+    /**
+     * Install the baseline Java 8 runtime on first launcher start when it is
+     * not already present. Newer Java versions are installed on demand when
+     * the selected Minecraft version requires them.
+     */
+    public static void installDefaultRuntimeIfMissing(Context context) {
+        try {
+            if (MultiRTUtils.getExactJreName(8) != null) {
+                Log.i("NewJREAuto", "Java 8 runtime is already installed");
+                return;
+            }
+            if (!isOnline(context)) {
+                Log.i("NewJREAuto", "Skipping automatic Java 8 install: device is offline");
+                return;
+            }
+            Log.i("NewJREAuto", "No Java 8 runtime found; starting automatic installation");
+            tryDownloadRuntime(context, 8);
+            Log.i("NewJREAuto", "Automatic Java 8 installation completed");
+        } catch (RuntimeException e) {
+            Log.e("NewJREAuto", "Automatic Java 8 installation failed", e);
+        }
+    }
+
     public static boolean isJavaVersionAvailableForDownload(int version) {
         for (ExternalRuntime javaVersion : ExternalRuntime.values()) {
             if (javaVersion.majorVersion == version) {
