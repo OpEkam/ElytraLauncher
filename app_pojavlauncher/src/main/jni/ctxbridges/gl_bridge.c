@@ -62,7 +62,9 @@ static capture_glFinish_t capture_glFinish;
 static pthread_mutex_t capture_mutex = PTHREAD_MUTEX_INITIALIZER;
 static atomic_bool capture_enabled = false;
 static uint8_t* capture_pixels;
+static uint8_t* capture_row;
 static size_t capture_capacity;
+static size_t capture_row_capacity;
 static int capture_width, capture_height, capture_stride, capture_sequence;
 /* Do not force a GPU readback on every game swap. The recorder currently
  * consumes at most 30 frames per second, so capture at that cadence. */
