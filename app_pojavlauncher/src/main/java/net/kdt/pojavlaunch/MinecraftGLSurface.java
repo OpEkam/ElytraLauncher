@@ -136,7 +136,8 @@ public class MinecraftGLSurface extends View implements GrabListener, DirectGame
         // FIXME: LWJGL3ify 3.x does not like when surface randomly dies on SurfaceView
         // (it doesnt swap to 1x1 pbuffer cause it uses sdl for swap instead of glfw)
         try {
-            useSurfaceView = useSurfaceView && !LOCAL_RENDERER.equals("opengles3_desktopgl_zink_kopper") &&
+            useSurfaceView = useSurfaceView && !LOCAL_RENDERER.equals("opengles_mobileglues") &&
+                    !LOCAL_RENDERER.equals("opengles3_desktopgl_zink_kopper") &&
                     !Tools.hasMods("angelica") &&
                     !Tools.hasMods("lwjgl3ify-3");
         } catch (NullPointerException ignored){}
