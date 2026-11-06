@@ -7,6 +7,8 @@ import android.view.PixelCopy;
 import android.view.SurfaceView;
 import android.view.TextureView;
 import android.view.View;
+
+import net.kdt.pojavlaunch.Tools;
 import android.util.Log;
 
 import java.io.IOException;
@@ -35,6 +37,9 @@ public final class GameplaySurfaceCapture implements AutoCloseable {
     }
 
     public static boolean isSupported(View source) {
+        // MobileGlues frames are captured in the native EGL swap hook. PixelCopy/
+        // TextureView readback is unreliable for this renderer and can return black.
+        if ("opengles_mobileglues".equals(Tools.LOCAL_RENDERER)) return false;
         if (source instanceof TextureView) return true;
         return source instanceof SurfaceView && android.os.Build.VERSION.SDK_INT >= 24;
     }

@@ -6,6 +6,10 @@
 #include <stdlib.h>
 #include <dlfcn.h>
 #include <stdbool.h>
+#include <pthread.h>
+#include <stdatomic.h>
+#include <stdint.h>
+#include <limits.h>
 #include <environ/environ.h>
 #include "gl_bridge.h"
 #include "egl_loader.h"
@@ -21,6 +25,101 @@
 static __thread gl_render_window_t* currentBundle;
 static EGLDisplay g_EglDisplay;
 
+/*
+ * Read the completed EGL back buffer on the render thread, before eglSwapBuffers
+ * presents it. Resolving GL entry points through this EGL implementation is
+ * important: MobileGlues supplies its own EGL/GLES implementation.
+ */
+typedef void (*capture_glReadPixels_t)(int, int, int, int, unsigned int, unsigned int, void*);
+static capture_glReadPixels_t capture_glReadPixels;
+static pthread_mutex_t capture_mutex = PTHREAD_MUTEX_INITIALIZER;
+static atomic_bool capture_enabled = false;
+static uint8_t* capture_pixels;
+static uint8_t* capture_row;
+static size_t capture_capacity;
+static size_t capture_row_capacity;
+static int capture_width, capture_height, capture_stride, capture_sequence;
+
+void gl_set_frame_capture_enabled(bool enabled) {
+    atomic_store(&capture_enabled, enabled);
+}
+
+bool gl_copy_latest_frame(void* destination, size_t capacity, int* metadata) {
+    if (destination == NULL || metadata == NULL || pthread_mutex_lock(&capture_mutex) != 0)
+        return false;
+    size_t bytes = 0;
+    if (capture_stride > 0 && capture_height > 0
+            && (size_t) capture_stride <= SIZE_MAX / (size_t) capture_height / 4) {
+        bytes = (size_t) capture_stride * (size_t) capture_height * 4;
+    }
+    bool has_frame = capture_pixels != NULL && bytes > 0;
+    if (has_frame) {
+        metadata[0] = capture_width;
+        metadata[1] = capture_height;
+        metadata[2] = capture_stride;
+        metadata[3] = capture_sequence;
+    }
+    bool copied = has_frame && capacity >= bytes;
+    if (copied) memcpy(destination, capture_pixels, bytes);
+    pthread_mutex_unlock(&capture_mutex);
+    return copied;
+}
+
+static void gl_capture_current_frame(void) {
+    if (!atomic_load(&capture_enabled) || currentBundle == NULL
+            || currentBundle->surface == EGL_NO_SURFACE) return;
+    if (capture_glReadPixels == NULL && eglGetProcAddress_p != NULL) {
+        capture_glReadPixels = (capture_glReadPixels_t) eglGetProcAddress_p("glReadPixels");
+    }
+    if (capture_glReadPixels == NULL) return;
+
+    EGLint width = 0, height = 0;
+    if (!eglQuerySurface_p(g_EglDisplay, currentBundle->surface, EGL_WIDTH, &width)
+            || !eglQuerySurface_p(g_EglDisplay, currentBundle->surface, EGL_HEIGHT, &height)
+            || width < 2 || height < 2
+            || (size_t) width > SIZE_MAX / (size_t) height / 4) return;
+
+    if (pthread_mutex_trylock(&capture_mutex) != 0) return;
+    size_t bytes = (size_t) width * (size_t) height * 4;
+    size_t row_bytes = (size_t) width * 4;
+    if (bytes > capture_capacity) {
+        uint8_t* replacement = (uint8_t*) realloc(capture_pixels, bytes);
+        if (replacement == NULL) {
+            pthread_mutex_unlock(&capture_mutex);
+            return;
+        }
+        capture_pixels = replacement;
+        capture_capacity = bytes;
+    }
+    if (row_bytes > capture_row_capacity) {
+        uint8_t* replacement = (uint8_t*) realloc(capture_row, row_bytes);
+        if (replacement == NULL) {
+            pthread_mutex_unlock(&capture_mutex);
+            return;
+        }
+        capture_row = replacement;
+        capture_row_capacity = row_bytes;
+    }
+
+    /* RGBA is four bytes per pixel; the Java converter consumes RGB and ignores alpha. */
+    capture_glReadPixels(0, 0, width, height, 0x1908 /* GL_RGBA */,
+                         0x1401 /* GL_UNSIGNED_BYTE */, capture_pixels);
+
+    /* OpenGL returns the bottom row first. Convert to top-down RGBX like OSMesa. */
+    for (int y = 0; y < height / 2; ++y) {
+        uint8_t* top = capture_pixels + (size_t) y * row_bytes;
+        uint8_t* bottom = capture_pixels + (size_t) (height - 1 - y) * row_bytes;
+        memcpy(capture_row, top, row_bytes);
+        memcpy(top, bottom, row_bytes);
+        memcpy(bottom, capture_row, row_bytes);
+    }
+    capture_width = width;
+    capture_height = height;
+    capture_stride = width;
+    ++capture_sequence;
+    pthread_mutex_unlock(&capture_mutex);
+}
+
 bool gl_init() {
     if(!dlsym_EGL()) return false;
     g_EglDisplay = eglGetDisplay_p(EGL_DEFAULT_DISPLAY);
@@ -32,6 +131,8 @@ bool gl_init() {
         LOGE("eglInitialize_p() failed: %04x", eglGetError_p());
         return false;
     }
+    capture_glReadPixels = (capture_glReadPixels_t) eglGetProcAddress_p("glReadPixels");
+    if (capture_glReadPixels == NULL) LOGW("GL frame capture unavailable: glReadPixels was not exposed by EGL");
     return true;
 }
 
@@ -180,19 +281,22 @@ void gl_make_current(gl_render_window_t* bundle) {
 }
 
 void gl_swap_buffers() {
+    if (currentBundle == NULL) return;
     if(currentBundle->state == STATE_RENDERER_NEW_WINDOW) {
         eglMakeCurrent_p(g_EglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT); //detach everything to destroy the old EGLSurface
         gl_swap_surface(currentBundle);
         eglMakeCurrent_p(g_EglDisplay, currentBundle->surface, currentBundle->surface, currentBundle->context);
         currentBundle->state = STATE_RENDERER_ALIVE;
     }
-    if(currentBundle->surface != NULL)
+    if(currentBundle->surface != NULL) {
+        gl_capture_current_frame();
         if(!eglSwapBuffers_p(g_EglDisplay, currentBundle->surface) && eglGetError_p() == EGL_BAD_SURFACE) {
             eglMakeCurrent_p(g_EglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
             currentBundle->newNativeSurface = NULL;
             gl_swap_surface(currentBundle);
             eglMakeCurrent_p(g_EglDisplay, currentBundle->surface, currentBundle->surface, currentBundle->context);
             LOGI("The window has died, awaiting window change");
+        }
     }
 
 }
