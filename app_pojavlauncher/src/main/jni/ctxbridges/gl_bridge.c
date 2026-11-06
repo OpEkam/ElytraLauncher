@@ -10,6 +10,7 @@
 #include <stdatomic.h>
 #include <stdint.h>
 #include <limits.h>
+#include <time.h>
 #include <environ/environ.h>
 #include "gl_bridge.h"
 #include "egl_loader.h"
@@ -39,8 +40,13 @@ static uint8_t* capture_row;
 static size_t capture_capacity;
 static size_t capture_row_capacity;
 static int capture_width, capture_height, capture_stride, capture_sequence;
+/* Do not force a GPU readback on every game swap. The recorder currently
+ * consumes at most 30 frames per second, so capture at that cadence. */
+#define GL_CAPTURE_INTERVAL_NS (1000000000LL / 30LL)
+static int64_t capture_next_time_ns;
 
 void gl_set_frame_capture_enabled(bool enabled) {
+    if (enabled) capture_next_time_ns = 0;
     atomic_store(&capture_enabled, enabled);
 }
 
@@ -68,6 +74,14 @@ bool gl_copy_latest_frame(void* destination, size_t capacity, int* metadata) {
 static void gl_capture_current_frame(void) {
     if (!atomic_load(&capture_enabled) || currentBundle == NULL
             || currentBundle->surface == EGL_NO_SURFACE) return;
+
+    /* Throttle before touching GL state or synchronizing with the GPU. */
+    struct timespec capture_now;
+    if (clock_gettime(CLOCK_MONOTONIC, &capture_now) != 0) return;
+    int64_t now_ns = (int64_t) capture_now.tv_sec * 1000000000LL
+            + (int64_t) capture_now.tv_nsec;
+    if (capture_next_time_ns != 0 && now_ns < capture_next_time_ns) return;
+    capture_next_time_ns = now_ns + GL_CAPTURE_INTERVAL_NS;
     if (capture_glReadPixels == NULL && eglGetProcAddress_p != NULL) {
         capture_glReadPixels = (capture_glReadPixels_t) eglGetProcAddress_p("glReadPixels");
     }
