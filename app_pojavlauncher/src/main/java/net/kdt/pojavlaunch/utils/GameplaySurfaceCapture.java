@@ -37,9 +37,10 @@ public final class GameplaySurfaceCapture implements AutoCloseable {
     }
 
     public static boolean isSupported(View source) {
-        // MobileGlues frames are captured in the native EGL swap hook. PixelCopy/
-        // TextureView readback is unreliable for this renderer and can return black.
-        if ("opengles_mobileglues".equals(Tools.LOCAL_RENDERER)) return false;
+        // All opengles* renderers, including Kopper/Zink, use the native EGL
+        // swap hook. Surface readback is unreliable for these renderers and can
+        // return black frames; Vulkan Zink uses the separate OSMesa native path.
+        if (Tools.LOCAL_RENDERER != null && Tools.LOCAL_RENDERER.startsWith("opengles")) return false;
         if (source instanceof TextureView) return true;
         return source instanceof SurfaceView && android.os.Build.VERSION.SDK_INT >= 24;
     }
