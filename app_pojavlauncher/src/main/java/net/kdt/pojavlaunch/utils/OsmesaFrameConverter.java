@@ -40,40 +40,9 @@ public final class OsmesaFrameConverter {
 
         final int sourceBase = source.position();
         final int outputBase = destination.position();
-        final int yBase = outputBase;
-        final int uBase = yBase + ySize;
-        final int vBase = uBase + chromaSize;
-
-        for (int y = 0; y < height; y++) {
-            for (int x = 0; x < width; x++) {
-                int pixel = sourceBase + (y * rowStridePixels + x) * 4;
-                int r = source.get(pixel) & 0xff;
-                int g = source.get(pixel + 1) & 0xff;
-                int b = source.get(pixel + 2) & 0xff;
-                destination.put(yBase + y * width + x, clamp(((66 * r + 129 * g + 25 * b + 128) >> 8) + 16));
-            }
-        }
-
-        for (int y = 0; y < height; y += 2) {
-            for (int x = 0; x < width; x += 2) {
-                int r = 0, g = 0, b = 0;
-                for (int dy = 0; dy < 2; dy++) {
-                    for (int dx = 0; dx < 2; dx++) {
-                        int pixel = sourceBase + ((y + dy) * rowStridePixels + x + dx) * 4;
-                        r += source.get(pixel) & 0xff;
-                        g += source.get(pixel + 1) & 0xff;
-                        b += source.get(pixel + 2) & 0xff;
-                    }
-                }
-                r = (r + 2) >> 2;
-                g = (g + 2) >> 2;
-                b = (b + 2) >> 2;
-                int chromaIndex = (y / 2) * (width / 2) + x / 2;
-                destination.put(uBase + chromaIndex,
-                        clamp(((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128));
-                destination.put(vBase + chromaIndex,
-                        clamp(((112 * r - 94 * g - 18 * b + 128) >> 8) + 128));
-            }
+        if (!JREUtils.convertRgbaToI420(source, sourceBase, width, height,
+                rowStridePixels, destination, outputBase)) {
+            throw new IllegalArgumentException("Native RGBA-to-I420 conversion failed");
         }
         destination.position(outputBase + requiredOutput);
     }

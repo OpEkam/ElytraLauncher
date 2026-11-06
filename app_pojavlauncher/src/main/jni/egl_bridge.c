@@ -102,6 +102,66 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_setFrameCaptureEnabled(JNIEnv* env, jcla
 }
 
 JNIEXPORT jboolean JNICALL
+Java_net_kdt_pojavlaunch_utils_JREUtils_convertRgbaToI420(JNIEnv* env, jclass clazz,
+        jobject source, jint sourceOffset, jint width, jint height, jint rowStridePixels,
+        jobject destination, jint destinationOffset) {
+    if (source == NULL || destination == NULL || sourceOffset < 0 || destinationOffset < 0
+            || width < 2 || height < 2 || (width & 1) != 0 || (height & 1) != 0
+            || rowStridePixels < width) return JNI_FALSE;
+
+    uint8_t* src = (uint8_t*) (*env)->GetDirectBufferAddress(env, source);
+    uint8_t* dst = (uint8_t*) (*env)->GetDirectBufferAddress(env, destination);
+    jlong srcCapacity = (*env)->GetDirectBufferCapacity(env, source);
+    jlong dstCapacity = (*env)->GetDirectBufferCapacity(env, destination);
+    if (src == NULL || dst == NULL || srcCapacity <= 0 || dstCapacity <= 0) return JNI_FALSE;
+
+    uint64_t sourceBytes = ((uint64_t) (height - 1) * (uint64_t) rowStridePixels
+            + (uint64_t) width) * 4U;
+    uint64_t ySize = (uint64_t) width * (uint64_t) height;
+    uint64_t outputBytes = ySize + ySize / 2U;
+    if ((uint64_t) sourceOffset + sourceBytes > (uint64_t) srcCapacity
+            || (uint64_t) destinationOffset + outputBytes > (uint64_t) dstCapacity
+            || sourceBytes > SIZE_MAX || outputBytes > SIZE_MAX) return JNI_FALSE;
+
+    const uint8_t* input = src + sourceOffset;
+    uint8_t* yPlane = dst + destinationOffset;
+    uint8_t* uPlane = yPlane + ySize;
+    uint8_t* vPlane = uPlane + ySize / 4U;
+
+    for (int y = 0; y < height; ++y) {
+        const uint8_t* row = input + (size_t) y * (size_t) rowStridePixels * 4U;
+        uint8_t* out = yPlane + (size_t) y * (size_t) width;
+        for (int x = 0; x < width; ++x) {
+            int r = row[x * 4], g = row[x * 4 + 1], b = row[x * 4 + 2];
+            int value = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;
+            out[x] = (uint8_t) (value < 0 ? 0 : (value > 255 ? 255 : value));
+        }
+    }
+
+    const size_t chromaWidth = (size_t) width / 2U;
+    for (int y = 0; y < height; y += 2) {
+        const uint8_t* row0 = input + (size_t) y * (size_t) rowStridePixels * 4U;
+        const uint8_t* row1 = row0 + (size_t) rowStridePixels * 4U;
+        size_t chromaRow = (size_t) (y / 2) * chromaWidth;
+        for (int x = 0; x < width; x += 2) {
+            const uint8_t* p0 = row0 + (size_t) x * 4U;
+            const uint8_t* p1 = p0 + 4U;
+            const uint8_t* p2 = row1 + (size_t) x * 4U;
+            const uint8_t* p3 = p2 + 4U;
+            int r = (p0[0] + p1[0] + p2[0] + p3[0] + 2) >> 2;
+            int g = (p0[1] + p1[1] + p2[1] + p3[1] + 2) >> 2;
+            int b = (p0[2] + p1[2] + p2[2] + p3[2] + 2) >> 2;
+            size_t index = chromaRow + (size_t) x / 2U;
+            int u = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
+            int v = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
+            uPlane[index] = (uint8_t) (u < 0 ? 0 : (u > 255 ? 255 : u));
+            vPlane[index] = (uint8_t) (v < 0 ? 0 : (v > 255 ? 255 : v));
+        }
+    }
+    return JNI_TRUE;
+}
+
+JNIEXPORT jboolean JNICALL
 Java_net_kdt_pojavlaunch_utils_JREUtils_copyLatestFrame(JNIEnv* env, jclass clazz,
                                                          jobject destination, jintArray info) {
     if ((pojav_environ->config_renderer != RENDERER_VK_ZINK

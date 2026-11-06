@@ -632,6 +632,9 @@ public class JREUtils {
     public static native void setFrameCaptureEnabled(boolean enabled);
     /** Copies the newest RGBX frame into a direct buffer; info = width, height, row stride, sequence. */
     public static native boolean copyLatestFrame(java.nio.ByteBuffer destination, int[] info);
+    /** Converts a direct RGBA frame to I420 using optimized native loops. */
+    public static native boolean convertRgbaToI420(java.nio.ByteBuffer source, int sourceOffset,
+            int width, int height, int rowStridePixels, java.nio.ByteBuffer destination, int destinationOffset);
     public static native void initializeHooks();
     public static native void setupExitMethod(Context context);
     // Obtain AWT screen pixels to render on Android SurfaceView
