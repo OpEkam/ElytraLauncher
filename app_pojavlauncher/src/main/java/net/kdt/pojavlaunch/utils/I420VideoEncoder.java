@@ -6,6 +6,8 @@ import android.media.MediaCodecInfo;
 import android.media.MediaCodecList;
 import android.media.MediaFormat;
 import android.media.MediaMuxer;
+import android.os.Build;
+import android.util.Log;
 
 import java.io.File;
 import java.io.IOException;
@@ -20,6 +22,7 @@ import java.nio.ByteBuffer;
  */
 public final class I420VideoEncoder implements AutoCloseable {
     private static final String MIME = "video/avc";
+    private static final String TAG = "ElytraI420Encoder";
     private static final long CODEC_TIMEOUT_US = 10_000L;
     private static final long STOP_TIMEOUT_MS = 10_000L;
 
@@ -52,6 +55,10 @@ public final class I420VideoEncoder implements AutoCloseable {
         if (encoderInfo == null) {
             throw new IOException("No AVC encoder supports flexible YUV input");
         }
+        String acceleration = Build.VERSION.SDK_INT >= 29
+                ? Boolean.toString(encoderInfo.isHardwareAccelerated()) : "unknown";
+        Log.i(TAG, "Selected AVC encoder: " + encoderInfo.getName()
+                + " (hardware accelerated: " + acceleration + ")");
 
         this.width = width;
         this.height = height;
@@ -85,23 +92,34 @@ public final class I420VideoEncoder implements AutoCloseable {
 
     private static MediaCodecInfo findFlexibleYuvEncoder() {
         MediaCodecList list = new MediaCodecList(MediaCodecList.ALL_CODECS);
+        MediaCodecInfo fallback = null;
         for (MediaCodecInfo info : list.getCodecInfos()) {
             if (!info.isEncoder()) continue;
             for (String type : info.getSupportedTypes()) {
                 if (!MIME.equalsIgnoreCase(type)) continue;
                 try {
                     MediaCodecInfo.CodecCapabilities caps = info.getCapabilitiesForType(type);
+                    boolean supportsFlexibleYuv = false;
                     for (int color : caps.colorFormats) {
                         if (color == MediaCodecInfo.CodecCapabilities.COLOR_FormatYUV420Flexible) {
-                            return info;
+                            supportsFlexibleYuv = true;
+                            break;
                         }
                     }
+                    if (!supportsFlexibleYuv) continue;
+
+                    // Prefer the device's hardware AVC encoder. Selecting the first
+                    // advertised codec can accidentally choose a slow software encoder.
+                    if (Build.VERSION.SDK_INT >= 29 && info.isHardwareAccelerated()) {
+                        return info;
+                    }
+                    if (fallback == null) fallback = info;
                 } catch (RuntimeException ignored) {
                     // Skip codecs whose capability query is broken on this device.
                 }
             }
         }
-        return null;
+        return fallback;
     }
 
     /**
