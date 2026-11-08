@@ -155,11 +155,20 @@ public final class I420VideoEncoder implements AutoCloseable {
                 return false;
             }
             copyI420ToImage(i420, image, width, height);
+            // Android requires the Image returned by getInputImage() to be
+            // closed before its input buffer is queued back to MediaCodec.
+            image.close();
+            image = null;
             long pts = Math.max(presentationTimeUs, lastPresentationTimeUs + 1L);
             codec.queueInputBuffer(inputIndex, 0, (int) frameSizeLong, pts, 0);
             lastPresentationTimeUs = pts;
             return true;
         } catch (RuntimeException e) {
+            if (image != null) {
+                try { image.close(); } catch (RuntimeException closeError) {
+                    e.addSuppressed(closeError);
+                }
+            }
             String codecName = "unknown";
             try {
                 codecName = codec.getName();
