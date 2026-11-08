@@ -70,6 +70,8 @@ public class MainMenuFragment extends Fragment {
                 AlertDialog sodiumWarningDialog = new AlertDialog.Builder(requireContext())
                         .setTitle(R.string.sodium_warning_title)
                         .setMessage(R.string.sodium_warning_message)
+                        .setPositiveButton(R.string.launch_sodium_anyway, (d,w) ->
+                                ExtraCore.setValue(ExtraConstants.LAUNCH_GAME, true))
                         .setNeutralButton(R.string.delete_sodium, (d,w)-> {
                             Tools.deleteSodiumMods();
                             ExtraCore.setValue(ExtraConstants.LAUNCH_GAME, true);
