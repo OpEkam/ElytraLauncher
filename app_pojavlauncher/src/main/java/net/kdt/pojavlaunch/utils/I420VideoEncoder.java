@@ -160,10 +160,23 @@ public final class I420VideoEncoder implements AutoCloseable {
             lastPresentationTimeUs = pts;
             return true;
         } catch (RuntimeException e) {
+            String codecName = "unknown";
             try {
-                codec.queueInputBuffer(inputIndex, 0, 0, Math.max(0L, presentationTimeUs), 0);
+                codecName = codec.getName();
             } catch (RuntimeException ignored) {}
-            throw new IOException("Could not submit I420 frame to AVC encoder", e);
+            String cause = e.getClass().getSimpleName()
+                    + (e.getMessage() == null ? "" : ": " + e.getMessage());
+            Log.e(TAG, "Could not submit I420 frame to AVC encoder (codec="
+                    + codecName + ", size=" + width + "x" + height
+                    + ", inputBytes=" + frameSizeLong + ")", e);
+            try {
+                codec.queueInputBuffer(inputIndex, 0, 0,
+                        Math.max(0L, presentationTimeUs), 0);
+            } catch (RuntimeException releaseError) {
+                e.addSuppressed(releaseError);
+                Log.e(TAG, "Could not release failed AVC input buffer", releaseError);
+            }
+            throw new IOException("Could not submit I420 frame to AVC encoder (" + cause + ")", e);
         }
     }
 
