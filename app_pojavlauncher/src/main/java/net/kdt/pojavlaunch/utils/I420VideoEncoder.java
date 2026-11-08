@@ -201,11 +201,27 @@ public final class I420VideoEncoder implements AutoCloseable {
             throw new IOException("AVC encoder YUV plane buffer is too small");
         }
 
-        for (int row = 0; row < planeHeight; row++) {
-            int srcRow = sourceOffset + row * planeWidth;
-            int dstRow = destinationBase + row * rowStride;
-            for (int col = 0; col < planeWidth; col++) {
-                destination.put(dstRow + col * pixelStride, source.get(srcRow + col));
+        if (pixelStride == 1) {
+            // Bulk-copy contiguous luma rows instead of performing one absolute
+            // ByteBuffer read and write for every pixel.
+            ByteBuffer sourceView = source.duplicate();
+            ByteBuffer destinationView = destination.duplicate();
+            for (int row = 0; row < planeHeight; row++) {
+                int srcRow = sourceOffset + row * planeWidth;
+                int dstRow = destinationBase + row * rowStride;
+                sourceView.position(srcRow);
+                sourceView.limit(srcRow + planeWidth);
+                destinationView.position(dstRow);
+                destinationView.limit(dstRow + planeWidth);
+                destinationView.put(sourceView);
+            }
+        } else {
+            for (int row = 0; row < planeHeight; row++) {
+                int srcRow = sourceOffset + row * planeWidth;
+                int dstRow = destinationBase + row * rowStride;
+                for (int col = 0; col < planeWidth; col++) {
+                    destination.put(dstRow + col * pixelStride, source.get(srcRow + col));
+                }
             }
         }
     }

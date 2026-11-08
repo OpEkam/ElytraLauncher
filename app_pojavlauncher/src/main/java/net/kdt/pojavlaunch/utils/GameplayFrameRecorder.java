@@ -214,6 +214,9 @@ public final class GameplayFrameRecorder implements AutoCloseable {
             encoder.start(videoTempFile, frameWidth, frameHeight, bitRate, frameRate);
             startNs = System.nanoTime();
             lastSequence = info[3];
+            long metricWindowStartNs = startNs;
+            long captureTotalNs = 0L, convertTotalNs = 0L, encodeTotalNs = 0L;
+            int metricFrames = 0, metricEncoded = 0, metricDropped = 0;
             while (!stopRequested) {
                 if (paused) {
                     if (pausedAtNs == 0L) pausedAtNs = System.nanoTime();
@@ -230,7 +233,10 @@ public final class GameplayFrameRecorder implements AutoCloseable {
                     continue;
                 }
                 rgba.clear();
-                if (!JREUtils.copyLatestFrame(rgba, info) || info[3] == lastSequence) {
+                long captureStartNs = System.nanoTime();
+                boolean frameCopied = JREUtils.copyLatestFrame(rgba, info);
+                captureTotalNs += System.nanoTime() - captureStartNs;
+                if (!frameCopied || info[3] == lastSequence) {
                     Thread.sleep(5L);
                     continue;
                 }
@@ -239,12 +245,32 @@ public final class GameplayFrameRecorder implements AutoCloseable {
                     continue;
                 }
                 lastSequence = info[3];
+                metricFrames++;
                 i420.clear();
+                long convertStartNs = System.nanoTime();
                 OsmesaFrameConverter.rgbxToI420(rgba, frameWidth, frameHeight, rowStride, i420);
+                convertTotalNs += System.nanoTime() - convertStartNs;
                 i420.flip();
                 long ptsUs = Math.max(0L, (now - startNs - pausedTotalNs) / 1000L);
-                encoder.encodeFrame(i420, ptsUs);
+                long encodeStartNs = System.nanoTime();
+                if (encoder.encodeFrame(i420, ptsUs)) metricEncoded++;
+                else metricDropped++;
+                encodeTotalNs += System.nanoTime() - encodeStartNs;
                 lastSubmitNs = now;
+
+                long metricNowNs = System.nanoTime();
+                if (metricNowNs - metricWindowStartNs >= 5_000_000_000L) {
+                    long divisor = Math.max(1, metricFrames);
+                    Log.i(TAG, "Recorder performance (" + frameWidth + "x" + frameHeight
+                            + "): captured=" + metricFrames + ", encoded=" + metricEncoded
+                            + ", dropped=" + metricDropped
+                            + ", avgCaptureMs=" + (captureTotalNs / divisor / 1_000_000.0)
+                            + ", avgConvertMs=" + (convertTotalNs / divisor / 1_000_000.0)
+                            + ", avgEncoderSubmitMs=" + (encodeTotalNs / divisor / 1_000_000.0));
+                    metricWindowStartNs = metricNowNs;
+                    captureTotalNs = convertTotalNs = encodeTotalNs = 0L;
+                    metricFrames = metricEncoded = metricDropped = 0;
+                }
             }
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
