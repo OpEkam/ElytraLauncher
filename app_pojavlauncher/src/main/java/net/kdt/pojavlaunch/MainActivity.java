@@ -91,6 +91,8 @@ import org.lwjgl.glfw.CallbackBridge;
 
 import java.io.File;
 import java.io.IOException;
+import java.io.PrintWriter;
+import java.io.StringWriter;
 import java.util.List;
 import java.util.Objects;
 
@@ -749,9 +751,8 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
         }
         latestRecordingFile = new File(movies,
                 "ElytraGameplay-" + System.currentTimeMillis() + ".mp4");
-        gameplayFrameRecorder = new GameplayFrameRecorder(error -> runOnUiThread(() ->
-                Toast.makeText(MainActivity.this, "Recording error: " + error.getMessage(),
-                        Toast.LENGTH_LONG).show()));
+        gameplayFrameRecorder = new GameplayFrameRecorder(error ->
+                runOnUiThread(() -> showRecordingError(error)));
         try {
             gameplayFrameRecorder.start(latestRecordingFile, 8_000_000, 30,
                     minecraftGLView.mSurface, recordMicrophone, projection);
@@ -766,6 +767,31 @@ public class MainActivity extends BaseActivity implements ControlButtonMenuListe
                     Toast.LENGTH_LONG).show();
             if (projection != null) releaseProjectionService();
         }
+    }
+
+    private void showRecordingError(IOException error) {
+        StringWriter writer = new StringWriter();
+        error.printStackTrace(new PrintWriter(writer));
+        String details = writer.toString();
+        // Keep the dialog manageable while retaining the complete root-cause chain.
+        if (details.length() > 12000) details = details.substring(0, 12000)
+                + "\\n\\n[Error details truncated]";
+        final String copyDetails = details;
+        new AlertDialog.Builder(this)
+                .setTitle("Gameplay recording failed")
+                .setMessage(details)
+                .setPositiveButton("Copy error details", (dialog, which) -> {
+                    ClipboardManager clipboard = (ClipboardManager)
+                            getSystemService(CLIPBOARD_SERVICE);
+                    if (clipboard != null) {
+                        clipboard.setPrimaryClip(ClipData.newPlainText(
+                                "ElytraLauncher recording error", copyDetails));
+                        Toast.makeText(this, "Recording error details copied",
+                                Toast.LENGTH_SHORT).show();
+                    }
+                })
+                .setNegativeButton("Close", null)
+                .show();
     }
 
     private void toggleGameplayRecordingPause() {
