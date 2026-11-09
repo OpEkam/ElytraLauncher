@@ -219,31 +219,29 @@ public final class I420VideoEncoder implements AutoCloseable {
         long lastByte = (long) (planeHeight - 1) * rowStride
                 + (long) (planeWidth - 1) * pixelStride;
         int destinationBase = destination.position();
-        if (lastByte >= (long) destination.limit() - destinationBase) {
-            throw new IOException("AVC encoder YUV plane buffer is too small");
+        if (lastByte < 0 || lastByte >= (long) destination.limit() - destinationBase) {
+            throw new IOException("AVC encoder YUV plane buffer is too small"
+                    + " (required=" + (lastByte + 1L) + ", available="
+                    + (destination.limit() - destinationBase) + ", rowStride="
+                    + rowStride + ", pixelStride=" + pixelStride + ")");
+        }
+        long sourceEnd = (long) sourceOffset
+                + (long) (planeHeight - 1) * planeWidth + planeWidth;
+        if (sourceOffset < source.position() || sourceEnd > source.limit()) {
+            throw new IOException("Packed I420 source plane is too small"
+                    + " (requiredEnd=" + sourceEnd + ", limit=" + source.limit() + ")");
         }
 
-        if (pixelStride == 1) {
-            // Bulk-copy contiguous luma rows instead of performing one absolute
-            // ByteBuffer read and write for every pixel.
-            ByteBuffer sourceView = source.duplicate();
-            ByteBuffer destinationView = destination.duplicate();
-            for (int row = 0; row < planeHeight; row++) {
-                int srcRow = sourceOffset + row * planeWidth;
-                int dstRow = destinationBase + row * rowStride;
-                sourceView.position(srcRow);
-                sourceView.limit(srcRow + planeWidth);
-                destinationView.position(dstRow);
-                destinationView.limit(dstRow + planeWidth);
-                destinationView.put(sourceView);
-            }
-        } else {
-            for (int row = 0; row < planeHeight; row++) {
-                int srcRow = sourceOffset + row * planeWidth;
-                int dstRow = destinationBase + row * rowStride;
-                for (int col = 0; col < planeWidth; col++) {
-                    destination.put(dstRow + col * pixelStride, source.get(srcRow + col));
-                }
+        // Use absolute indexed copies. Some Android flexible-YUV Image buffers
+        // expose row padding differently between duplicate views; changing a
+        // duplicate's position/limit can exceed its reported limit even when
+        // the actual pixel addresses are valid. Absolute access avoids that
+        // position/limit failure and respects each plane's pixel stride.
+        for (int row = 0; row < planeHeight; row++) {
+            int srcRow = sourceOffset + row * planeWidth;
+            int dstRow = destinationBase + row * rowStride;
+            for (int col = 0; col < planeWidth; col++) {
+                destination.put(dstRow + col * pixelStride, source.get(srcRow + col));
             }
         }
     }
