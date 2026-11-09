@@ -51,10 +51,22 @@ public final class OsmesaFrameConverter {
     /** Converts an ARGB bitmap into planar I420 for the video encoder. */
     public static void bitmapToI420(Bitmap bitmap, int width, int height,
                                     ByteBuffer destination) {
+        bitmapToI420(bitmap, width, height, destination,
+                new int[width], new int[width]);
+    }
+
+    /**
+     * Reuses caller-owned scanline buffers to avoid allocating large temporary
+     * arrays for every recorded frame. Luma and chroma are generated together
+     * from pairs of rows to reduce Bitmap readbacks.
+     */
+    public static void bitmapToI420(Bitmap bitmap, int width, int height,
+                                    ByteBuffer destination, int[] row0, int[] row1) {
         if (bitmap == null || destination == null || width < 2 || height < 2
                 || (width & 1) != 0 || (height & 1) != 0
-                || bitmap.getWidth() < width || bitmap.getHeight() < height) {
-            throw new IllegalArgumentException("Invalid bitmap or I420 dimensions");
+                || bitmap.getWidth() < width || bitmap.getHeight() < height
+                || row0 == null || row1 == null || row0.length < width || row1.length < width) {
+            throw new IllegalArgumentException("Invalid bitmap, scratch buffers, or I420 dimensions");
         }
         int ySize = width * height;
         int chromaSize = ySize / 4;
@@ -62,44 +74,38 @@ public final class OsmesaFrameConverter {
         if (destination.remaining() < requiredOutput) {
             throw new IllegalArgumentException("I420 destination is too small");
         }
-        int[] row0 = new int[width];
-        int[] row1 = new int[width];
         int base = destination.position();
         int uBase = base + ySize;
         int vBase = uBase + chromaSize;
-
-        for (int y = 0; y < height; y++) {
-            bitmap.getPixels(row0, 0, width, 0, y, width, 1);
-            for (int x = 0; x < width; x++) {
-                int pixel = row0[x];
-                int r = (pixel >> 16) & 0xff;
-                int g = (pixel >> 8) & 0xff;
-                int b = pixel & 0xff;
-                destination.put(base + y * width + x,
-                        clamp(((66 * r + 129 * g + 25 * b + 128) >> 8) + 16));
-            }
-        }
-
         for (int y = 0; y < height; y += 2) {
             bitmap.getPixels(row0, 0, width, 0, y, width, 1);
             bitmap.getPixels(row1, 0, width, 0, y + 1, width, 1);
             for (int x = 0; x < width; x += 2) {
-                int r = 0, g = 0, b = 0;
                 int p0 = row0[x], p1 = row0[x + 1];
                 int p2 = row1[x], p3 = row1[x + 1];
-                r = ((p0 >> 16) & 0xff) + ((p1 >> 16) & 0xff)
-                        + ((p2 >> 16) & 0xff) + ((p3 >> 16) & 0xff);
-                g = ((p0 >> 8) & 0xff) + ((p1 >> 8) & 0xff)
-                        + ((p2 >> 8) & 0xff) + ((p3 >> 8) & 0xff);
-                b = (p0 & 0xff) + (p1 & 0xff) + (p2 & 0xff) + (p3 & 0xff);
-                r = (r + 2) >> 2;
-                g = (g + 2) >> 2;
-                b = (b + 2) >> 2;
-                int index = (y / 2) * (width / 2) + x / 2;
-                destination.put(uBase + index,
-                        clamp(((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128));
-                destination.put(vBase + index,
-                        clamp(((112 * r - 94 * g - 18 * b + 128) >> 8) + 128));
+                int r0 = (p0 >> 16) & 255, g0 = (p0 >> 8) & 255, b0 = p0 & 255;
+                int r1 = (p1 >> 16) & 255, g1 = (p1 >> 8) & 255, b1 = p1 & 255;
+                int r2 = (p2 >> 16) & 255, g2 = (p2 >> 8) & 255, b2 = p2 & 255;
+                int r3 = (p3 >> 16) & 255, g3 = (p3 >> 8) & 255, b3 = p3 & 255;
+
+                int yIndex = y * width + x;
+                destination.put(base + yIndex,
+                        clamp(((66 * r0 + 129 * g0 + 25 * b0 + 128) >> 8) + 16));
+                destination.put(base + yIndex + 1,
+                        clamp(((66 * r1 + 129 * g1 + 25 * b1 + 128) >> 8) + 16));
+                destination.put(base + yIndex + width,
+                        clamp(((66 * r2 + 129 * g2 + 25 * b2 + 128) >> 8) + 16));
+                destination.put(base + yIndex + width + 1,
+                        clamp(((66 * r3 + 129 * g3 + 25 * b3 + 128) >> 8) + 16));
+
+                int red = (r0 + r1 + r2 + r3 + 2) >> 2;
+                int green = (g0 + g1 + g2 + g3 + 2) >> 2;
+                int blue = (b0 + b1 + b2 + b3 + 2) >> 2;
+                int chromaIndex = (y / 2) * (width / 2) + x / 2;
+                destination.put(uBase + chromaIndex,
+                        clamp(((-38 * red - 74 * green + 112 * blue + 128) >> 8) + 128));
+                destination.put(vBase + chromaIndex,
+                        clamp(((112 * red - 94 * green - 18 * blue + 128) >> 8) + 128));
             }
         }
         destination.position(base + requiredOutput);

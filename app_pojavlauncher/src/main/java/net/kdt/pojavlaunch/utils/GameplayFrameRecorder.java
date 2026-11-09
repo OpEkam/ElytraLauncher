@@ -5,6 +5,7 @@ import android.graphics.Canvas;
 import android.media.projection.MediaProjection;
 import android.util.Log;
 import android.view.View;
+import android.graphics.Rect;
 
 import java.io.File;
 import java.io.IOException;
@@ -337,17 +338,26 @@ public final class GameplayFrameRecorder implements AutoCloseable {
                         firstFrameError);
             }
 
-            int width = firstFrame.getWidth() & ~1;
-            int height = firstFrame.getHeight() & ~1;
-            if (width < 2 || height < 2) {
+            int sourceWidth = firstFrame.getWidth();
+            int sourceHeight = firstFrame.getHeight();
+            if (sourceWidth < 2 || sourceHeight < 2) {
                 throw new IOException("Minecraft surface returned an invalid frame size");
             }
+            // Cap SurfaceView/TextureView recording at 720p. Full device-resolution
+            // readback, RGB->YUV conversion and H.264 encoding are unnecessarily
+            // expensive on mid-range phones and can starve Minecraft's renderer.
+            float scale = Math.min(1f, Math.min(1280f / sourceWidth, 720f / sourceHeight));
+            int width = Math.max(2, ((int) (sourceWidth * scale)) & ~1);
+            int height = Math.max(2, ((int) (sourceHeight * scale)) & ~1);
             Bitmap lastGoodFrame = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
             Canvas frameCacheCanvas = new Canvas(lastGoodFrame);
-            frameCacheCanvas.drawBitmap(firstFrame, 0f, 0f, null);
+            Rect targetRect = new Rect(0, 0, width, height);
+            frameCacheCanvas.drawBitmap(firstFrame, null, targetRect, null);
 
             try {
                 ByteBuffer i420 = ByteBuffer.allocateDirect(width * height * 3 / 2);
+                int[] row0 = new int[width];
+                int[] row1 = new int[width];
                 encoder = new I420VideoEncoder();
                 encoder.start(videoTempFile, width, height, bitRate, frameRate);
 
@@ -377,7 +387,7 @@ public final class GameplayFrameRecorder implements AutoCloseable {
                     Bitmap frame;
                     try {
                         frame = capture.capture();
-                        frameCacheCanvas.drawBitmap(frame, 0f, 0f, null);
+                        frameCacheCanvas.drawBitmap(frame, null, targetRect, null);
                         consecutiveCaptureFailures = 0;
                     } catch (IOException captureError) {
                         consecutiveCaptureFailures++;
@@ -394,7 +404,7 @@ public final class GameplayFrameRecorder implements AutoCloseable {
                         frame = lastGoodFrame;
                     }
                     i420.clear();
-                    OsmesaFrameConverter.bitmapToI420(frame, width, height, i420);
+                    OsmesaFrameConverter.bitmapToI420(frame, width, height, i420, row0, row1);
                     i420.flip();
                     long ptsUs = Math.max(0L, (now - startNs - pausedTotalNs) / 1000L);
                     encoder.encodeFrame(i420, ptsUs);
