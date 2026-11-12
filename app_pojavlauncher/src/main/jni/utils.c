@@ -331,3 +331,65 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_copyI420ToYuvPlanes(
             chroma_width, chroma_height, v_row_stride, v_pixel_stride);
     return (ok_y && ok_u && ok_v) ? JNI_TRUE : JNI_FALSE;
 }
+
+
+/*
+ * Converts an Android ARGB_8888 pixel array to planar I420.
+ * The pixel array and output direct buffer are reused by the recorder.
+ */
+JNIEXPORT jboolean JNICALL
+Java_net_kdt_pojavlaunch_utils_JREUtils_convertArgbPixelsToI420(
+        JNIEnv *env, jclass clazz, jintArray pixels_array,
+        jint width, jint height, jobject destination_buffer, jint destination_offset) {
+    if (pixels_array == NULL || destination_buffer == NULL
+            || width < 2 || height < 2 || (width & 1) != 0 || (height & 1) != 0
+            || destination_offset < 0) return JNI_FALSE;
+
+    int64_t pixel_count = (int64_t) width * height;
+    int64_t y_size = pixel_count;
+    int64_t chroma_size = y_size / 4;
+    int64_t required = y_size + 2 * chroma_size;
+    jsize array_length = (*env)->GetArrayLength(env, pixels_array);
+    uint8_t *output = (uint8_t *) (*env)->GetDirectBufferAddress(env, destination_buffer);
+    jlong output_capacity = (*env)->GetDirectBufferCapacity(env, destination_buffer);
+    if (pixel_count > INT32_MAX || array_length < pixel_count || output == NULL
+            || output_capacity < 0 || (int64_t) destination_offset + required > output_capacity) {
+        return JNI_FALSE;
+    }
+
+    jint *pixels = (*env)->GetIntArrayElements(env, pixels_array, NULL);
+    if (pixels == NULL) return JNI_FALSE;
+    uint8_t *y_plane = output + destination_offset;
+    uint8_t *u_plane = y_plane + y_size;
+    uint8_t *v_plane = u_plane + chroma_size;
+
+    for (int row = 0; row < height; row += 2) {
+        const jint *row0 = pixels + (int64_t) row * width;
+        const jint *row1 = row0 + width;
+        for (int col = 0; col < width; col += 2) {
+            jint p0 = row0[col], p1 = row0[col + 1];
+            jint p2 = row1[col], p3 = row1[col + 1];
+            int r0=(p0>>16)&255, g0=(p0>>8)&255, b0=p0&255;
+            int r1=(p1>>16)&255, g1=(p1>>8)&255, b1=p1&255;
+            int r2=(p2>>16)&255, g2=(p2>>8)&255, b2=p2&255;
+            int r3=(p3>>16)&255, g3=(p3>>8)&255, b3=p3&255;
+            int index = row * width + col;
+            int yy;
+            yy=((66*r0+129*g0+25*b0+128)>>8)+16; y_plane[index]=(uint8_t)(yy<0?0:(yy>255?255:yy));
+            yy=((66*r1+129*g1+25*b1+128)>>8)+16; y_plane[index+1]=(uint8_t)(yy<0?0:(yy>255?255:yy));
+            yy=((66*r2+129*g2+25*b2+128)>>8)+16; y_plane[index+width]=(uint8_t)(yy<0?0:(yy>255?255:yy));
+            yy=((66*r3+129*g3+25*b3+128)>>8)+16; y_plane[index+width+1]=(uint8_t)(yy<0?0:(yy>255?255:yy));
+
+            int red=(r0+r1+r2+r3+2)>>2;
+            int green=(g0+g1+g2+g3+2)>>2;
+            int blue=(b0+b1+b2+b3+2)>>2;
+            int chroma_index=(row/2)*(width/2)+col/2;
+            int u=((-38*red-74*green+112*blue+128)>>8)+128;
+            int v=((112*red-94*green-18*blue+128)>>8)+128;
+            u_plane[chroma_index]=(uint8_t)(u<0?0:(u>255?255:u));
+            v_plane[chroma_index]=(uint8_t)(v<0?0:(v>255?255:v));
+        }
+    }
+    (*env)->ReleaseIntArrayElements(env, pixels_array, pixels, JNI_ABORT);
+    return JNI_TRUE;
+}
