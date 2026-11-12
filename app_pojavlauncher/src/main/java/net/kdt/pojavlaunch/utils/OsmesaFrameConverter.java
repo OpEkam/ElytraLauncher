@@ -111,6 +111,29 @@ public final class OsmesaFrameConverter {
         destination.position(base + requiredOutput);
     }
 
+
+    /**
+     * Converts an ARGB bitmap through a reusable full-frame pixel array and
+     * native conversion. The scanline implementation remains as a safe fallback.
+     */
+    public static void bitmapToI420(Bitmap bitmap, int width, int height,
+                                    ByteBuffer destination, int[] pixels,
+                                    int[] row0, int[] row1) {
+        if (bitmap == null || pixels == null || pixels.length < width * height) {
+            throw new IllegalArgumentException("Invalid bitmap pixel buffer");
+        }
+        if (destination == null || destination.remaining() < width * height * 3 / 2) {
+            throw new IllegalArgumentException("I420 destination is too small");
+        }
+        int base = destination.position();
+        bitmap.getPixels(pixels, 0, width, 0, 0, width, height);
+        if (JREUtils.convertArgbPixelsToI420(pixels, width, height, destination, base)) {
+            destination.position(base + width * height * 3 / 2);
+            return;
+        }
+        bitmapToI420(bitmap, width, height, destination, row0, row1);
+    }
+
     private static byte clamp(int value) {
         return (byte) (value < 0 ? 0 : Math.min(value, 255));
     }
