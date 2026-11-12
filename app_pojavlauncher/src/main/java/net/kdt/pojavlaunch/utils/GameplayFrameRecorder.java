@@ -358,6 +358,7 @@ public final class GameplayFrameRecorder implements AutoCloseable {
 
             try {
                 ByteBuffer i420 = ByteBuffer.allocateDirect(width * height * 3 / 2);
+                int[] pixels = new int[width * height];
                 int[] row0 = new int[width];
                 int[] row1 = new int[width];
                 encoder = new I420VideoEncoder();
@@ -418,7 +419,7 @@ public final class GameplayFrameRecorder implements AutoCloseable {
                     }
                     i420.clear();
                     long convertStartNs = System.nanoTime();
-                    OsmesaFrameConverter.bitmapToI420(frame, width, height, i420, row0, row1);
+                    OsmesaFrameConverter.bitmapToI420(frame, width, height, i420, pixels, row0, row1);
                     convertTotalNs += System.nanoTime() - convertStartNs;
                     i420.flip();
                     long ptsUs = Math.max(0L, (now - startNs - pausedTotalNs) / 1000L);
