@@ -642,6 +642,9 @@ public class JREUtils {
             java.nio.ByteBuffer uBuffer, int uOffset, int uLimit, int uRowStride, int uPixelStride,
             java.nio.ByteBuffer vBuffer, int vOffset, int vLimit, int vRowStride, int vPixelStride,
             int width, int height);
+    /** Converts a reusable ARGB pixel array to I420 using native loops. */
+    public static native boolean convertArgbPixelsToI420(int[] pixels, int width, int height,
+            java.nio.ByteBuffer destination, int destinationOffset);
     /** Converts a direct RGBA frame to I420 using optimized native loops. */
     public static native boolean convertRgbaToI420(java.nio.ByteBuffer source, int sourceOffset,
             int width, int height, int rowStridePixels, java.nio.ByteBuffer destination, int destinationOffset);
