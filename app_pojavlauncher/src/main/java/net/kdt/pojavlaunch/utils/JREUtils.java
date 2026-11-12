@@ -632,6 +632,16 @@ public class JREUtils {
     public static native void setFrameCaptureEnabled(boolean enabled);
     /** Copies the newest RGBX frame into a direct buffer; info = width, height, row stride, sequence. */
     public static native boolean copyLatestFrame(java.nio.ByteBuffer destination, int[] info);
+    /**
+     * Copies packed I420 into MediaCodec flexible-YUV planes using native
+     * row copies and stride-aware chroma writes.
+     */
+    public static native boolean copyI420ToYuvPlanes(
+            java.nio.ByteBuffer source, int sourceOffset, int sourceLimit,
+            java.nio.ByteBuffer yBuffer, int yOffset, int yLimit, int yRowStride, int yPixelStride,
+            java.nio.ByteBuffer uBuffer, int uOffset, int uLimit, int uRowStride, int uPixelStride,
+            java.nio.ByteBuffer vBuffer, int vOffset, int vLimit, int vRowStride, int vPixelStride,
+            int width, int height);
     /** Converts a direct RGBA frame to I420 using optimized native loops. */
     public static native boolean convertRgbaToI420(java.nio.ByteBuffer source, int sourceOffset,
             int width, int height, int rowStridePixels, java.nio.ByteBuffer destination, int destinationOffset);
