@@ -196,6 +196,21 @@ public final class I420VideoEncoder implements AutoCloseable {
             throw new IOException("AVC encoder returned an invalid YUV input image");
         }
 
+        ByteBuffer y = planes[0].getBuffer();
+        ByteBuffer u = planes[1].getBuffer();
+        ByteBuffer v = planes[2].getBuffer();
+        if (y != null && u != null && v != null
+                && JREUtils.copyI420ToYuvPlanes(
+                        source, source.position(), source.limit(),
+                        y, y.position(), y.limit(), planes[0].getRowStride(), planes[0].getPixelStride(),
+                        u, u.position(), u.limit(), planes[1].getRowStride(), planes[1].getPixelStride(),
+                        v, v.position(), v.limit(), planes[2].getRowStride(), planes[2].getPixelStride(),
+                        width, height)) {
+            return;
+        }
+
+        // Keep the bounds-checked Java implementation as a compatibility
+        // fallback for devices whose Image planes are not direct ByteBuffers.
         int sourceBase = source.position();
         int ySize = width * height;
         int chromaWidth = width / 2;
