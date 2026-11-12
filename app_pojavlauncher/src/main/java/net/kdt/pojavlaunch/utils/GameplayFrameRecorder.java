@@ -73,7 +73,6 @@ public final class GameplayFrameRecorder implements AutoCloseable {
         synchronized (stateLock) {
             if (running || worker != null) throw new IllegalStateException("Recorder is already active");
             outputFile = output;
-            resetPerformanceLog();
             includeAudio = recordMicrophone || projection != null;
             captureView = rendererSurface;
             videoTempFile = includeAudio
@@ -94,6 +93,7 @@ public final class GameplayFrameRecorder implements AutoCloseable {
             }
             bitRate = requestedBitRate;
             frameRate = requestedFrameRate;
+            resetPerformanceLog();
             workerFailure = null;
             stopRequested = false;
             paused = false;
