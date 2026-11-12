@@ -8,6 +8,7 @@ import android.view.View;
 import android.graphics.Rect;
 
 import java.io.File;
+import java.io.FileWriter;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
@@ -72,6 +73,7 @@ public final class GameplayFrameRecorder implements AutoCloseable {
         synchronized (stateLock) {
             if (running || worker != null) throw new IllegalStateException("Recorder is already active");
             outputFile = output;
+            resetPerformanceLog();
             includeAudio = recordMicrophone || projection != null;
             captureView = rendererSurface;
             videoTempFile = includeAudio
@@ -262,8 +264,8 @@ public final class GameplayFrameRecorder implements AutoCloseable {
                 long metricNowNs = System.nanoTime();
                 if (metricNowNs - metricWindowStartNs >= 5_000_000_000L) {
                     long divisor = Math.max(1, metricFrames);
-                    Log.i(TAG, "Recorder performance (" + frameWidth + "x" + frameHeight
-                            + "): captured=" + metricFrames + ", encoded=" + metricEncoded
+                    writePerformanceStats("path=native-frame-copy, size=" + frameWidth + "x" + frameHeight
+                            + ", captured=" + metricFrames + ", encoded=" + metricEncoded
                             + ", dropped=" + metricDropped
                             + ", avgCaptureMs=" + (captureTotalNs / divisor / 1_000_000.0)
                             + ", avgConvertMs=" + (convertTotalNs / divisor / 1_000_000.0)
@@ -367,6 +369,10 @@ public final class GameplayFrameRecorder implements AutoCloseable {
                 long lastSubmitNs = 0L;
                 long frameIntervalNs = 1_000_000_000L / Math.max(1, frameRate);
                 int consecutiveCaptureFailures = 0;
+                long metricWindowStartNs = startNs;
+                long captureTotalNs = 0L, scaleTotalNs = 0L;
+                long convertTotalNs = 0L, encodeTotalNs = 0L;
+                int metricFrames = 0, metricEncoded = 0, metricDropped = 0;
 
                 while (!stopRequested) {
                     if (paused) {
@@ -385,9 +391,13 @@ public final class GameplayFrameRecorder implements AutoCloseable {
                     }
 
                     Bitmap frame;
+                    long captureStartNs = System.nanoTime();
                     try {
                         frame = capture.capture();
+                        captureTotalNs += System.nanoTime() - captureStartNs;
+                        long scaleStartNs = System.nanoTime();
                         frameCacheCanvas.drawBitmap(frame, null, targetRect, null);
+                        scaleTotalNs += System.nanoTime() - scaleStartNs;
                         consecutiveCaptureFailures = 0;
                     } catch (IOException captureError) {
                         consecutiveCaptureFailures++;
@@ -403,16 +413,64 @@ public final class GameplayFrameRecorder implements AutoCloseable {
                         // whole launcher window (which would include touch controls).
                         frame = lastGoodFrame;
                     }
+                    if (frame == lastGoodFrame) {
+                        captureTotalNs += System.nanoTime() - captureStartNs;
+                    }
                     i420.clear();
+                    long convertStartNs = System.nanoTime();
                     OsmesaFrameConverter.bitmapToI420(frame, width, height, i420, row0, row1);
+                    convertTotalNs += System.nanoTime() - convertStartNs;
                     i420.flip();
                     long ptsUs = Math.max(0L, (now - startNs - pausedTotalNs) / 1000L);
-                    encoder.encodeFrame(i420, ptsUs);
+                    long encodeStartNs = System.nanoTime();
+                    if (encoder.encodeFrame(i420, ptsUs)) metricEncoded++;
+                    else metricDropped++;
+                    encodeTotalNs += System.nanoTime() - encodeStartNs;
+                    metricFrames++;
                     lastSubmitNs = now;
+
+                    long metricNowNs = System.nanoTime();
+                    if (metricNowNs - metricWindowStartNs >= 5_000_000_000L) {
+                        long divisor = Math.max(1, metricFrames);
+                        writePerformanceStats("path=surface-capture, size=" + width + "x" + height
+                                + ", captured=" + metricFrames + ", encoded=" + metricEncoded
+                                + ", dropped=" + metricDropped
+                                + ", captureFailures=" + consecutiveCaptureFailures
+                                + ", avgCaptureMs=" + (captureTotalNs / divisor / 1_000_000.0)
+                                + ", avgScaleMs=" + (scaleTotalNs / divisor / 1_000_000.0)
+                                + ", avgConvertMs=" + (convertTotalNs / divisor / 1_000_000.0)
+                                + ", avgEncoderSubmitMs=" + (encodeTotalNs / divisor / 1_000_000.0));
+                        metricWindowStartNs = metricNowNs;
+                        captureTotalNs = scaleTotalNs = convertTotalNs = encodeTotalNs = 0L;
+                        metricFrames = metricEncoded = metricDropped = 0;
+                    }
                 }
             } finally {
                 if (!lastGoodFrame.isRecycled()) lastGoodFrame.recycle();
             }
+        }
+    }
+
+    private void resetPerformanceLog() {
+        if (outputFile == null) return;
+        File statsFile = new File(outputFile.getAbsolutePath() + ".performance.txt");
+        try (FileWriter writer = new FileWriter(statsFile, false)) {
+            writer.write("ElytraLauncher recording performance diagnostics\n");
+            writer.write("Target FPS=" + frameRate + "\n");
+        } catch (IOException error) {
+            Log.w(TAG, "Could not create recording performance log", error);
+        }
+    }
+
+    private void writePerformanceStats(String sample) {
+        Log.i(TAG, "Recorder performance: " + sample);
+        if (outputFile == null) return;
+        File statsFile = new File(outputFile.getAbsolutePath() + ".performance.txt");
+        try (FileWriter writer = new FileWriter(statsFile, true)) {
+            writer.write(sample);
+            writer.write("\n");
+        } catch (IOException error) {
+            Log.w(TAG, "Could not save recording performance sample", error);
         }
     }
 
