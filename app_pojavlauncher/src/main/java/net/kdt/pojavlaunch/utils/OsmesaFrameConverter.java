@@ -48,6 +48,31 @@ public final class OsmesaFrameConverter {
     }
 
 
+    /**
+     * Converts a full-size RGBA renderer frame into a smaller I420 output frame.
+     * Nearest-neighbour sampling reduces conversion and encoder workload.
+     */
+    public static void rgbxToI420Scaled(ByteBuffer source, int sourceWidth, int sourceHeight,
+                                        int rowStridePixels, int outputWidth, int outputHeight,
+                                        ByteBuffer destination) {
+        if (source == null || destination == null || sourceWidth < 2 || sourceHeight < 2
+                || outputWidth < 2 || outputHeight < 2 || (outputWidth & 1) != 0
+                || (outputHeight & 1) != 0 || rowStridePixels < sourceWidth) {
+            throw new IllegalArgumentException("Invalid source or output frame dimensions");
+        }
+        int outputBytes = outputWidth * outputHeight * 3 / 2;
+        if (destination.remaining() < outputBytes) {
+            throw new IllegalArgumentException("I420 destination is too small");
+        }
+        int sourceBase = source.position();
+        int outputBase = destination.position();
+        if (!JREUtils.convertRgbaToI420Scaled(source, sourceBase, sourceWidth, sourceHeight,
+                rowStridePixels, outputWidth, outputHeight, destination, outputBase)) {
+            throw new IllegalArgumentException("Native scaled RGBA-to-I420 conversion failed");
+        }
+        destination.position(outputBase + outputBytes);
+    }
+
     /** Converts an ARGB bitmap into planar I420 for the video encoder. */
     public static void bitmapToI420(Bitmap bitmap, int width, int height,
                                     ByteBuffer destination) {
