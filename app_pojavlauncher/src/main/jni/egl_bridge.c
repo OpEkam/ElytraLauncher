@@ -172,6 +172,66 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_convertRgbaToI420(JNIEnv* env, jclass cl
 }
 
 JNIEXPORT jboolean JNICALL
+Java_net_kdt_pojavlaunch_utils_JREUtils_convertRgbaToI420Scaled(JNIEnv* env, jclass clazz,
+        jobject source, jint sourceOffset, jint sourceWidth, jint sourceHeight,
+        jint rowStridePixels, jint outputWidth, jint outputHeight,
+        jobject destination, jint destinationOffset) {
+    if (source == NULL || destination == NULL || sourceOffset < 0 || destinationOffset < 0
+            || sourceWidth < 2 || sourceHeight < 2 || outputWidth < 2 || outputHeight < 2
+            || (outputWidth & 1) != 0 || (outputHeight & 1) != 0
+            || rowStridePixels < sourceWidth) return JNI_FALSE;
+    uint8_t* src = (uint8_t*) (*env)->GetDirectBufferAddress(env, source);
+    uint8_t* dst = (uint8_t*) (*env)->GetDirectBufferAddress(env, destination);
+    jlong srcCapacity = (*env)->GetDirectBufferCapacity(env, source);
+    jlong dstCapacity = (*env)->GetDirectBufferCapacity(env, destination);
+    if (src == NULL || dst == NULL || srcCapacity <= 0 || dstCapacity <= 0) return JNI_FALSE;
+    uint64_t sourceBytes = ((uint64_t) (sourceHeight - 1) * (uint64_t) rowStridePixels
+            + (uint64_t) sourceWidth) * 4U;
+    uint64_t ySize = (uint64_t) outputWidth * (uint64_t) outputHeight;
+    uint64_t outputBytes = ySize + ySize / 2U;
+    if ((uint64_t) sourceOffset + sourceBytes > (uint64_t) srcCapacity
+            || (uint64_t) destinationOffset + outputBytes > (uint64_t) dstCapacity) return JNI_FALSE;
+    const uint8_t* input = src + sourceOffset;
+    uint8_t* yPlane = dst + destinationOffset;
+    uint8_t* uPlane = yPlane + ySize;
+    uint8_t* vPlane = uPlane + ySize / 4U;
+    const size_t sourceRowBytes = (size_t) rowStridePixels * 4U;
+    const size_t chromaWidth = (size_t) outputWidth / 2U;
+    for (int y = 0; y < outputHeight; y += 2) {
+        int sy0 = (int) (((int64_t) y * sourceHeight) / outputHeight);
+        int sy1 = (int) (((int64_t) (y + 1) * sourceHeight) / outputHeight);
+        const uint8_t* row0 = input + (size_t) sy0 * sourceRowBytes;
+        const uint8_t* row1 = input + (size_t) sy1 * sourceRowBytes;
+        uint8_t* yOut0 = yPlane + (size_t) y * (size_t) outputWidth;
+        uint8_t* yOut1 = yOut0 + outputWidth;
+        size_t chromaRow = (size_t) (y / 2) * chromaWidth;
+        for (int x = 0; x < outputWidth; x += 2) {
+            int sx0 = (int) (((int64_t) x * sourceWidth) / outputWidth);
+            int sx1 = (int) (((int64_t) (x + 1) * sourceWidth) / outputWidth);
+            const uint8_t* p0 = row0 + (size_t) sx0 * 4U;
+            const uint8_t* p1 = row0 + (size_t) sx1 * 4U;
+            const uint8_t* p2 = row1 + (size_t) sx0 * 4U;
+            const uint8_t* p3 = row1 + (size_t) sx1 * 4U;
+            int r0 = p0[0], g0 = p0[1], b0 = p0[2];
+            int r1 = p1[0], g1 = p1[1], b1 = p1[2];
+            int r2 = p2[0], g2 = p2[1], b2 = p2[2];
+            int r3 = p3[0], g3 = p3[1], b3 = p3[2];
+            yOut0[x] = (uint8_t) (((66 * r0 + 129 * g0 + 25 * b0 + 128) >> 8) + 16);
+            yOut0[x + 1] = (uint8_t) (((66 * r1 + 129 * g1 + 25 * b1 + 128) >> 8) + 16);
+            yOut1[x] = (uint8_t) (((66 * r2 + 129 * g2 + 25 * b2 + 128) >> 8) + 16);
+            yOut1[x + 1] = (uint8_t) (((66 * r3 + 129 * g3 + 25 * b3 + 128) >> 8) + 16);
+            int red = (r0 + r1 + r2 + r3 + 2) >> 2;
+            int green = (g0 + g1 + g2 + g3 + 2) >> 2;
+            int blue = (b0 + b1 + b2 + b3 + 2) >> 2;
+            size_t ci = chromaRow + (size_t) x / 2U;
+            uPlane[ci] = (uint8_t) (((-38 * red - 74 * green + 112 * blue + 128) >> 8) + 128);
+            vPlane[ci] = (uint8_t) (((112 * red - 94 * green - 18 * blue + 128) >> 8) + 128);
+        }
+    }
+    return JNI_TRUE;
+}
+
+JNIEXPORT jboolean JNICALL
 Java_net_kdt_pojavlaunch_utils_JREUtils_copyLatestFrame(JNIEnv* env, jclass clazz,
                                                          jobject destination, jintArray info) {
     if ((pojav_environ->config_renderer != RENDERER_VK_ZINK
