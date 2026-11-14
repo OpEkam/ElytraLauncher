@@ -176,12 +176,12 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_copyLatestFrame(JNIEnv* env, jclass claz
                                                          jobject destination, jintArray info) {
     if ((pojav_environ->config_renderer != RENDERER_VK_ZINK
             && pojav_environ->config_renderer != RENDERER_GL4ES)
-            || destination == NULL || info == NULL || (*env)->GetArrayLength(env, info) < 10)
+            || destination == NULL || info == NULL || (*env)->GetArrayLength(env, info) < 13)
         return JNI_FALSE;
     void* address = (*env)->GetDirectBufferAddress(env, destination);
     jlong capacity = (*env)->GetDirectBufferCapacity(env, destination);
     if (address == NULL || capacity <= 0) return JNI_FALSE;
-    jint metadata[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
+    jint metadata[13] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     bool result = pojav_environ->config_renderer == RENDERER_VK_ZINK
             ? osm_copy_latest_frame(address, (size_t) capacity, metadata)
             : gl_copy_latest_frame(address, (size_t) capacity, metadata);
@@ -191,7 +191,7 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_copyLatestFrame(JNIEnv* env, jclass claz
     jboolean copied = result ? JNI_TRUE : JNI_FALSE;
     // Metadata and capture-path counters are returned even when the supplied
     // buffer is too small, allowing Java to size and retry the snapshot.
-    (*env)->SetIntArrayRegion(env, info, 0, 10, metadata);
+    (*env)->SetIntArrayRegion(env, info, 0, 13, metadata);
     return copied;
 }
 
