@@ -92,9 +92,34 @@ static bool capture_pbo_supported;
 static EGLContext capture_pbo_context = EGL_NO_CONTEXT;
 static int capture_pbo_width, capture_pbo_height;
 static int64_t capture_next_time_ns;
+/* Cumulative capture-path counters, sampled by the recorder thread. */
+static atomic_uint capture_diag_pbo_supported = 0;
+static atomic_uint capture_diag_pbo_submitted = 0;
+static atomic_uint capture_diag_pbo_published = 0;
+static atomic_uint capture_diag_pbo_busy_skips = 0;
+static atomic_uint capture_diag_pbo_lock_drops = 0;
+static atomic_uint capture_diag_sync_fallback = 0;
+
+void gl_get_frame_capture_stats(int* stats) {
+    if (stats == NULL) return;
+    stats[0] = (int) atomic_load(&capture_diag_pbo_supported);
+    stats[1] = (int) atomic_load(&capture_diag_pbo_submitted);
+    stats[2] = (int) atomic_load(&capture_diag_pbo_published);
+    stats[3] = (int) atomic_load(&capture_diag_pbo_busy_skips);
+    stats[4] = (int) atomic_load(&capture_diag_pbo_lock_drops);
+    stats[5] = (int) atomic_load(&capture_diag_sync_fallback);
+}
 
 void gl_set_frame_capture_enabled(bool enabled) {
-    if (enabled) capture_next_time_ns = 0;
+    if (enabled) {
+        capture_next_time_ns = 0;
+        atomic_store(&capture_diag_pbo_supported, 0);
+        atomic_store(&capture_diag_pbo_submitted, 0);
+        atomic_store(&capture_diag_pbo_published, 0);
+        atomic_store(&capture_diag_pbo_busy_skips, 0);
+        atomic_store(&capture_diag_pbo_lock_drops, 0);
+        atomic_store(&capture_diag_sync_fallback, 0);
+    }
     atomic_store(&capture_enabled, enabled);
 }
 
@@ -155,12 +180,16 @@ static void capture_resolve_pbo_functions(void) {
     if (!version_supported && version[0] >= '3' && version[0] <= '9'
             && version[1] == '.') version_supported = true;
     capture_pbo_supported = version_supported;
+    atomic_store(&capture_diag_pbo_supported, version_supported ? 1U : 0U);
 }
 
 static bool capture_publish_pbo_frame(const uint8_t* pixels, int width, int height) {
     if (pixels == NULL || width < 2 || height < 2
             || (size_t) width > SIZE_MAX / (size_t) height / 4) return false;
-    if (pthread_mutex_trylock(&capture_mutex) != 0) return false;
+    if (pthread_mutex_trylock(&capture_mutex) != 0) {
+        atomic_fetch_add(&capture_diag_pbo_lock_drops, 1U);
+        return false;
+    }
 
     size_t bytes = (size_t) width * (size_t) height * 4;
     size_t row_bytes = (size_t) width * 4;
@@ -214,6 +243,7 @@ static void capture_reset_pbo_slots(bool delete_objects) {
 
 static bool capture_pbo_frame(int width, int height) {
     capture_resolve_pbo_functions();
+    atomic_store(&capture_diag_pbo_supported, capture_pbo_supported ? 1U : 0U);
     if (!capture_pbo_supported || currentBundle == NULL) return false;
 
     EGLContext context = currentBundle->context;
@@ -260,7 +290,9 @@ static bool capture_pbo_frame(int width, int height) {
             const uint8_t* mapped = (const uint8_t*) capture_glMapBufferRange(
                     GL_PIXEL_PACK_BUFFER, 0, (intptr_t) bytes, GL_MAP_READ_BIT);
             if (mapped != NULL) {
-                capture_publish_pbo_frame(mapped, width, height);
+                if (capture_publish_pbo_frame(mapped, width, height)) {
+                    atomic_fetch_add(&capture_diag_pbo_published, 1U);
+                }
                 capture_glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
             }
             capture_glDeleteSync(slot->fence);
@@ -272,6 +304,7 @@ static bool capture_pbo_frame(int width, int height) {
             if (capture_glFinish != NULL) capture_glFinish();
             capture_reset_pbo_slots(true);
             capture_pbo_supported = false;
+            atomic_store(&capture_diag_pbo_supported, 0U);
             return false;
         }
     }
@@ -291,13 +324,17 @@ static bool capture_pbo_frame(int width, int height) {
         slot->fence = capture_glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
         if (slot->fence != NULL) {
             slot->pending = true;
+            atomic_fetch_add(&capture_diag_pbo_submitted, 1U);
         } else {
             capture_glBindBuffer(GL_PIXEL_PACK_BUFFER, (unsigned int) previous_binding);
             if (capture_glFinish != NULL) capture_glFinish();
             capture_reset_pbo_slots(true);
             capture_pbo_supported = false;
+            atomic_store(&capture_diag_pbo_supported, 0U);
             return false;
         }
+    } else {
+        atomic_fetch_add(&capture_diag_pbo_busy_skips, 1U);
     }
 
     capture_glBindBuffer(GL_PIXEL_PACK_BUFFER, (unsigned int) previous_binding);
@@ -354,6 +391,7 @@ static void gl_capture_current_frame(void) {
     }
     capture_glReadPixels(0, 0, width, height, 0x1908 /* GL_RGBA */,
                          0x1401 /* GL_UNSIGNED_BYTE */, capture_pixels);
+    atomic_fetch_add(&capture_diag_sync_fallback, 1U);
     /* Flip in place using a reusable pixel-row buffer. */
     for (int y = 0; y < height / 2; ++y) {
         uint8_t* top = capture_pixels + (size_t) y * row_bytes;
