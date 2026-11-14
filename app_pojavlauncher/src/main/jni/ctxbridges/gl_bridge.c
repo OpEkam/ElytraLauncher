@@ -104,6 +104,11 @@ static atomic_uint capture_diag_pbo_published = 0;
 static atomic_uint capture_diag_pbo_busy_skips = 0;
 static atomic_uint capture_diag_pbo_lock_drops = 0;
 static atomic_uint capture_diag_sync_fallback = 0;
+/* EGL swap cadence and blocking time, sampled only while recording. */
+static atomic_ullong capture_diag_swap_count = 0;
+static atomic_ullong capture_diag_swap_interval_ns = 0;
+static atomic_ullong capture_diag_swap_duration_ns = 0;
+static int64_t capture_diag_last_swap_ns = 0;
 
 void gl_get_frame_capture_stats(int* stats) {
     if (stats == NULL) return;
@@ -113,6 +118,12 @@ void gl_get_frame_capture_stats(int* stats) {
     stats[3] = (int) atomic_load(&capture_diag_pbo_busy_skips);
     stats[4] = (int) atomic_load(&capture_diag_pbo_lock_drops);
     stats[5] = (int) atomic_load(&capture_diag_sync_fallback);
+    unsigned long long swaps = atomic_load(&capture_diag_swap_count);
+    unsigned long long interval_total = atomic_load(&capture_diag_swap_interval_ns);
+    unsigned long long duration_total = atomic_load(&capture_diag_swap_duration_ns);
+    stats[6] = (int) (swaps > INT_MAX ? INT_MAX : swaps);
+    stats[7] = swaps > 1 ? (int) (interval_total / (swaps - 1) / 1000ULL) : 0;
+    stats[8] = swaps > 0 ? (int) (duration_total / swaps / 1000ULL) : 0;
 }
 
 void gl_set_frame_capture_enabled(bool enabled) {
@@ -124,6 +135,10 @@ void gl_set_frame_capture_enabled(bool enabled) {
         atomic_store(&capture_diag_pbo_busy_skips, 0);
         atomic_store(&capture_diag_pbo_lock_drops, 0);
         atomic_store(&capture_diag_sync_fallback, 0);
+        atomic_store(&capture_diag_swap_count, 0);
+        atomic_store(&capture_diag_swap_interval_ns, 0);
+        atomic_store(&capture_diag_swap_duration_ns, 0);
+        capture_diag_last_swap_ns = 0;
     }
     atomic_store(&capture_enabled, enabled);
 }
@@ -596,7 +611,30 @@ void gl_swap_buffers() {
     }
     if(currentBundle->surface != NULL) {
         gl_capture_current_frame();
-        if(!eglSwapBuffers_p(g_EglDisplay, currentBundle->surface) && eglGetError_p() == EGL_BAD_SURFACE) {
+        struct timespec swap_start, swap_end;
+        bool measure_swap = atomic_load(&capture_enabled);
+        int64_t swap_start_ns = 0;
+        if (measure_swap && clock_gettime(CLOCK_MONOTONIC, &swap_start) == 0) {
+            swap_start_ns = (int64_t) swap_start.tv_sec * 1000000000LL
+                    + (int64_t) swap_start.tv_nsec;
+            if (capture_diag_last_swap_ns != 0 && swap_start_ns > capture_diag_last_swap_ns) {
+                atomic_fetch_add(&capture_diag_swap_interval_ns,
+                        (unsigned long long) (swap_start_ns - capture_diag_last_swap_ns));
+            }
+            capture_diag_last_swap_ns = swap_start_ns;
+        }
+        bool swap_ok = eglSwapBuffers_p(g_EglDisplay, currentBundle->surface);
+        if (measure_swap && swap_start_ns != 0
+                && clock_gettime(CLOCK_MONOTONIC, &swap_end) == 0) {
+            int64_t swap_end_ns = (int64_t) swap_end.tv_sec * 1000000000LL
+                    + (int64_t) swap_end.tv_nsec;
+            if (swap_end_ns >= swap_start_ns) {
+                atomic_fetch_add(&capture_diag_swap_duration_ns,
+                        (unsigned long long) (swap_end_ns - swap_start_ns));
+                atomic_fetch_add(&capture_diag_swap_count, 1ULL);
+            }
+        }
+        if(!swap_ok && eglGetError_p() == EGL_BAD_SURFACE) {
             eglMakeCurrent_p(g_EglDisplay, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
             currentBundle->newNativeSurface = NULL;
             gl_swap_surface(currentBundle);
