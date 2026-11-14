@@ -191,9 +191,14 @@ public final class GameplayFrameRecorder implements AutoCloseable {
             if (info[0] <= 1 || info[1] <= 1 || info[2] < info[0]) {
                 throw new IOException("No gameplay frames received from this renderer; its surface may not support capture");
             }
-            frameWidth = info[0] & ~1;
-            frameHeight = info[1] & ~1;
+            int sourceFrameWidth = info[0] & ~1;
+            int sourceFrameHeight = info[1] & ~1;
             rowStride = info[2];
+            // Limit encoded output to 640x360 for the lower-resolution performance test.
+            float captureScale = Math.min(1f, Math.min(640f / sourceFrameWidth,
+                    360f / sourceFrameHeight));
+            frameWidth = Math.max(2, ((int) (sourceFrameWidth * captureScale)) & ~1);
+            frameHeight = Math.max(2, ((int) (sourceFrameHeight * captureScale)) & ~1);
             long rgbaBytes = (long) rowStride * info[1] * 4L;
             long i420Bytes = (long) frameWidth * frameHeight * 3L / 2L;
             if (rgbaBytes > Integer.MAX_VALUE || i420Bytes > Integer.MAX_VALUE) {
@@ -264,7 +269,7 @@ public final class GameplayFrameRecorder implements AutoCloseable {
                 frameWaitSamples++;
                 lastUniqueFrameNs = uniqueFrameNs;
                 frameWaitStartNs = 0L;
-                if (info[0] < frameWidth || info[1] < frameHeight || info[2] != rowStride) {
+                if (info[0] < sourceFrameWidth || info[1] < sourceFrameHeight || info[2] != rowStride) {
                     Thread.sleep(5L);
                     continue;
                 }
@@ -272,7 +277,8 @@ public final class GameplayFrameRecorder implements AutoCloseable {
                 metricFrames++;
                 i420.clear();
                 long convertStartNs = System.nanoTime();
-                OsmesaFrameConverter.rgbxToI420(rgba, frameWidth, frameHeight, rowStride, i420);
+                OsmesaFrameConverter.rgbxToI420Scaled(rgba, sourceFrameWidth, sourceFrameHeight, rowStride,
+                        frameWidth, frameHeight, i420);
                 convertTotalNs += System.nanoTime() - convertStartNs;
                 i420.flip();
                 long ptsUs = Math.max(0L, (now - startNs - pausedTotalNs) / 1000L);
@@ -387,10 +393,8 @@ public final class GameplayFrameRecorder implements AutoCloseable {
             if (sourceWidth < 2 || sourceHeight < 2) {
                 throw new IOException("Minecraft surface returned an invalid frame size");
             }
-            // Cap SurfaceView/TextureView recording at 720p. Full device-resolution
-            // readback, RGB->YUV conversion and H.264 encoding are unnecessarily
-            // expensive on mid-range phones and can starve Minecraft's renderer.
-            float scale = Math.min(1f, Math.min(1280f / sourceWidth, 720f / sourceHeight));
+            // Match the native renderer path's 640x360 performance-test limit.
+            float scale = Math.min(1f, Math.min(640f / sourceWidth, 360f / sourceHeight));
             int width = Math.max(2, ((int) (sourceWidth * scale)) & ~1);
             int height = Math.max(2, ((int) (sourceHeight * scale)) & ~1);
             Bitmap lastGoodFrame = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888);
