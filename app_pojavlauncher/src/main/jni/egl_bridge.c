@@ -128,34 +128,44 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_convertRgbaToI420(JNIEnv* env, jclass cl
     uint8_t* uPlane = yPlane + ySize;
     uint8_t* vPlane = uPlane + ySize / 4U;
 
-    for (int y = 0; y < height; ++y) {
-        const uint8_t* row = input + (size_t) y * (size_t) rowStridePixels * 4U;
-        uint8_t* out = yPlane + (size_t) y * (size_t) width;
-        for (int x = 0; x < width; ++x) {
-            int r = row[x * 4], g = row[x * 4 + 1], b = row[x * 4 + 2];
-            int value = ((66 * r + 129 * g + 25 * b + 128) >> 8) + 16;
-            out[x] = (uint8_t) (value < 0 ? 0 : (value > 255 ? 255 : value));
-        }
-    }
-
+    /*
+     * Process each 2x2 pixel block once. The previous implementation walked
+     * the complete RGBA frame once for luma and a second time for chroma.
+     * Reusing the four loaded pixels here cuts redundant source reads and
+     * keeps the I420 output byte-for-byte equivalent to the same BT.601 math.
+     */
+    const size_t sourceRowBytes = (size_t) rowStridePixels * 4U;
     const size_t chromaWidth = (size_t) width / 2U;
     for (int y = 0; y < height; y += 2) {
-        const uint8_t* row0 = input + (size_t) y * (size_t) rowStridePixels * 4U;
-        const uint8_t* row1 = row0 + (size_t) rowStridePixels * 4U;
+        const uint8_t* row0 = input + (size_t) y * sourceRowBytes;
+        const uint8_t* row1 = row0 + sourceRowBytes;
+        uint8_t* yOut0 = yPlane + (size_t) y * (size_t) width;
+        uint8_t* yOut1 = yOut0 + width;
         size_t chromaRow = (size_t) (y / 2) * chromaWidth;
+
         for (int x = 0; x < width; x += 2) {
             const uint8_t* p0 = row0 + (size_t) x * 4U;
             const uint8_t* p1 = p0 + 4U;
             const uint8_t* p2 = row1 + (size_t) x * 4U;
             const uint8_t* p3 = p2 + 4U;
-            int r = (p0[0] + p1[0] + p2[0] + p3[0] + 2) >> 2;
-            int g = (p0[1] + p1[1] + p2[1] + p3[1] + 2) >> 2;
-            int b = (p0[2] + p1[2] + p2[2] + p3[2] + 2) >> 2;
-            size_t index = chromaRow + (size_t) x / 2U;
-            int u = ((-38 * r - 74 * g + 112 * b + 128) >> 8) + 128;
-            int v = ((112 * r - 94 * g - 18 * b + 128) >> 8) + 128;
-            uPlane[index] = (uint8_t) (u < 0 ? 0 : (u > 255 ? 255 : u));
-            vPlane[index] = (uint8_t) (v < 0 ? 0 : (v > 255 ? 255 : v));
+
+            int r0 = p0[0], g0 = p0[1], b0 = p0[2];
+            int r1 = p1[0], g1 = p1[1], b1 = p1[2];
+            int r2 = p2[0], g2 = p2[1], b2 = p2[2];
+            int r3 = p3[0], g3 = p3[1], b3 = p3[2];
+
+            size_t xIndex = (size_t) x;
+            yOut0[xIndex] = (uint8_t) (((66 * r0 + 129 * g0 + 25 * b0 + 128) >> 8) + 16);
+            yOut0[xIndex + 1U] = (uint8_t) (((66 * r1 + 129 * g1 + 25 * b1 + 128) >> 8) + 16);
+            yOut1[xIndex] = (uint8_t) (((66 * r2 + 129 * g2 + 25 * b2 + 128) >> 8) + 16);
+            yOut1[xIndex + 1U] = (uint8_t) (((66 * r3 + 129 * g3 + 25 * b3 + 128) >> 8) + 16);
+
+            int red = (r0 + r1 + r2 + r3 + 2) >> 2;
+            int green = (g0 + g1 + g2 + g3 + 2) >> 2;
+            int blue = (b0 + b1 + b2 + b3 + 2) >> 2;
+            size_t chromaIndex = chromaRow + (size_t) x / 2U;
+            uPlane[chromaIndex] = (uint8_t) (((-38 * red - 74 * green + 112 * blue + 128) >> 8) + 128);
+            vPlane[chromaIndex] = (uint8_t) (((112 * red - 94 * green - 18 * blue + 128) >> 8) + 128);
         }
     }
     return JNI_TRUE;
