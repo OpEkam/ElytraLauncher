@@ -176,19 +176,22 @@ Java_net_kdt_pojavlaunch_utils_JREUtils_copyLatestFrame(JNIEnv* env, jclass claz
                                                          jobject destination, jintArray info) {
     if ((pojav_environ->config_renderer != RENDERER_VK_ZINK
             && pojav_environ->config_renderer != RENDERER_GL4ES)
-            || destination == NULL || info == NULL || (*env)->GetArrayLength(env, info) < 4)
+            || destination == NULL || info == NULL || (*env)->GetArrayLength(env, info) < 10)
         return JNI_FALSE;
     void* address = (*env)->GetDirectBufferAddress(env, destination);
     jlong capacity = (*env)->GetDirectBufferCapacity(env, destination);
     if (address == NULL || capacity <= 0) return JNI_FALSE;
-    jint metadata[4] = {0, 0, 0, 0};
+    jint metadata[10] = {0, 0, 0, 0, 0, 0, 0, 0, 0, 0};
     bool result = pojav_environ->config_renderer == RENDERER_VK_ZINK
             ? osm_copy_latest_frame(address, (size_t) capacity, metadata)
             : gl_copy_latest_frame(address, (size_t) capacity, metadata);
+    if (pojav_environ->config_renderer == RENDERER_GL4ES) {
+        gl_get_frame_capture_stats((int*) &metadata[4]);
+    }
     jboolean copied = result ? JNI_TRUE : JNI_FALSE;
-    // Metadata is also returned when the supplied buffer is too small, allowing
-    // Java to size a correctly-sized direct buffer and retry the snapshot.
-    (*env)->SetIntArrayRegion(env, info, 0, 4, metadata);
+    // Metadata and capture-path counters are returned even when the supplied
+    // buffer is too small, allowing Java to size and retry the snapshot.
+    (*env)->SetIntArrayRegion(env, info, 0, 10, metadata);
     return copied;
 }
 
