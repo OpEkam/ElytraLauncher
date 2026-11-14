@@ -167,7 +167,7 @@ public final class GameplayFrameRecorder implements AutoCloseable {
 
     private void captureLoop() {
         ByteBuffer probe = ByteBuffer.allocateDirect(1);
-        int[] info = new int[10];
+        int[] info = new int[13];
         ByteBuffer rgba = null;
         ByteBuffer i420 = null;
         int frameWidth = 0, frameHeight = 0, rowStride = 0, lastSequence = -1;
@@ -305,7 +305,10 @@ public final class GameplayFrameRecorder implements AutoCloseable {
                             + ", pboPublished=" + info[6]
                             + ", pboBusySkips=" + info[7]
                             + ", pboPublishLockDrops=" + info[8]
-                            + ", syncFallbackFrames=" + info[9]);
+                            + ", syncFallbackFrames=" + info[9]
+                            + ", eglSwapCount=" + info[10]
+                            + ", avgEglSwapIntervalUs=" + info[11]
+                            + ", avgEglSwapDurationUs=" + info[12]);
                     metricWindowStartNs = metricNowNs;
                     captureTotalNs = convertTotalNs = encodeTotalNs = 0L;
                     frameIntervalTotalNs = frameWaitTotalNs = 0L;
