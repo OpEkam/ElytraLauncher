@@ -219,6 +219,10 @@ public final class GameplayFrameRecorder implements AutoCloseable {
             lastSequence = info[3];
             long metricWindowStartNs = startNs;
             long captureTotalNs = 0L, convertTotalNs = 0L, encodeTotalNs = 0L;
+            long frameIntervalTotalNs = 0L, frameWaitTotalNs = 0L;
+            long lastUniqueFrameNs = 0L, frameWaitStartNs = 0L;
+            int frameIntervalSamples = 0, frameWaitSamples = 0;
+            int pollAttempts = 0, unchangedSequencePolls = 0, failedCapturePolls = 0;
             int metricFrames = 0, metricEncoded = 0, metricDropped = 0;
             while (!stopRequested) {
                 if (paused) {
@@ -236,13 +240,30 @@ public final class GameplayFrameRecorder implements AutoCloseable {
                     continue;
                 }
                 rgba.clear();
+                if (frameWaitStartNs == 0L) frameWaitStartNs = System.nanoTime();
+                pollAttempts++;
                 long captureStartNs = System.nanoTime();
                 boolean frameCopied = JREUtils.copyLatestFrame(rgba, info);
                 captureTotalNs += System.nanoTime() - captureStartNs;
-                if (!frameCopied || info[3] == lastSequence) {
+                if (!frameCopied) {
+                    failedCapturePolls++;
                     Thread.sleep(5L);
                     continue;
                 }
+                if (info[3] == lastSequence) {
+                    unchangedSequencePolls++;
+                    Thread.sleep(5L);
+                    continue;
+                }
+                long uniqueFrameNs = System.nanoTime();
+                if (lastUniqueFrameNs != 0L) {
+                    frameIntervalTotalNs += uniqueFrameNs - lastUniqueFrameNs;
+                    frameIntervalSamples++;
+                }
+                frameWaitTotalNs += uniqueFrameNs - frameWaitStartNs;
+                frameWaitSamples++;
+                lastUniqueFrameNs = uniqueFrameNs;
+                frameWaitStartNs = 0L;
                 if (info[0] < frameWidth || info[1] < frameHeight || info[2] != rowStride) {
                     Thread.sleep(5L);
                     continue;
@@ -269,9 +290,21 @@ public final class GameplayFrameRecorder implements AutoCloseable {
                             + ", dropped=" + metricDropped
                             + ", avgCaptureMs=" + (captureTotalNs / divisor / 1_000_000.0)
                             + ", avgConvertMs=" + (convertTotalNs / divisor / 1_000_000.0)
-                            + ", avgEncoderSubmitMs=" + (encodeTotalNs / divisor / 1_000_000.0));
+                            + ", avgEncoderSubmitMs=" + (encodeTotalNs / divisor / 1_000_000.0)
+                            + ", avgFrameIntervalMs=" + (frameIntervalSamples == 0 ? 0.0
+                                    : frameIntervalTotalNs / (double) frameIntervalSamples / 1_000_000.0)
+                            + ", sourceFps=" + (frameIntervalSamples == 0 ? 0.0
+                                    : frameIntervalSamples * 1_000_000_000.0 / frameIntervalTotalNs)
+                            + ", avgWaitForNewFrameMs=" + (frameWaitSamples == 0 ? 0.0
+                                    : frameWaitTotalNs / (double) frameWaitSamples / 1_000_000.0)
+                            + ", pollAttempts=" + pollAttempts
+                            + ", unchangedPolls=" + unchangedSequencePolls
+                            + ", failedPolls=" + failedCapturePolls);
                     metricWindowStartNs = metricNowNs;
                     captureTotalNs = convertTotalNs = encodeTotalNs = 0L;
+                    frameIntervalTotalNs = frameWaitTotalNs = 0L;
+                    frameIntervalSamples = frameWaitSamples = 0;
+                    pollAttempts = unchangedSequencePolls = failedCapturePolls = 0;
                     metricFrames = metricEncoded = metricDropped = 0;
                 }
             }
