@@ -62,8 +62,13 @@ static capture_glFinish_t capture_glFinish;
 static pthread_mutex_t capture_mutex = PTHREAD_MUTEX_INITIALIZER;
 static atomic_bool capture_enabled = false;
 static uint8_t* capture_pixels;
-static uint8_t* capture_row;
+/* Render-thread staging storage: fill it without holding capture_mutex, then
+ * publish by swapping pointers under the mutex. The recorder only reads the
+ * currently published buffer while holding the same mutex. */
+static uint8_t* capture_staging;
 static size_t capture_capacity;
+static size_t capture_staging_capacity;
+static uint8_t* capture_row;
 static size_t capture_row_capacity;
 static int capture_width, capture_height, capture_stride, capture_sequence;
 /* Do not force a GPU readback on every game swap. The recorder currently
@@ -186,29 +191,45 @@ static void capture_resolve_pbo_functions(void) {
 static bool capture_publish_pbo_frame(const uint8_t* pixels, int width, int height) {
     if (pixels == NULL || width < 2 || height < 2
             || (size_t) width > SIZE_MAX / (size_t) height / 4) return false;
+
+    size_t bytes = (size_t) width * (size_t) height * 4;
+    size_t row_bytes = (size_t) width * 4;
+
+    /*
+     * Prepare the frame in a private staging buffer. The recorder never reads
+     * this pointer, so the expensive row flip/copy does not need the mutex.
+     * Only the short pointer swap below is shared with the recorder thread.
+     */
+    if (bytes > capture_staging_capacity) {
+        uint8_t* replacement = (uint8_t*) realloc(capture_staging, bytes);
+        if (replacement == NULL) return false;
+        capture_staging = replacement;
+        capture_staging_capacity = bytes;
+    }
+
+    for (int y = 0; y < height; ++y) {
+        const uint8_t* source = pixels + (size_t) (height - 1 - y) * row_bytes;
+        uint8_t* destination = capture_staging + (size_t) y * row_bytes;
+        memcpy(destination, source, row_bytes);
+    }
+
+    /*
+     * Keep the render thread non-blocking. If the recorder is copying the
+     * currently published frame, skip this publication rather than stalling
+     * Minecraft; the next completed PBO frame will be tried independently.
+     */
     if (pthread_mutex_trylock(&capture_mutex) != 0) {
         atomic_fetch_add(&capture_diag_pbo_lock_drops, 1U);
         return false;
     }
 
-    size_t bytes = (size_t) width * (size_t) height * 4;
-    size_t row_bytes = (size_t) width * 4;
-    if (bytes > capture_capacity) {
-        uint8_t* replacement = (uint8_t*) realloc(capture_pixels, bytes);
-        if (replacement == NULL) {
-            pthread_mutex_unlock(&capture_mutex);
-            return false;
-        }
-        capture_pixels = replacement;
-        capture_capacity = bytes;
-    }
+    uint8_t* previous_published = capture_pixels;
+    size_t previous_capacity = capture_capacity;
+    capture_pixels = capture_staging;
+    capture_capacity = capture_staging_capacity;
+    capture_staging = previous_published;
+    capture_staging_capacity = previous_capacity;
 
-    /* PBO data is bottom-up; publish it top-down without a second full-frame buffer. */
-    for (int y = 0; y < height; ++y) {
-        const uint8_t* source = pixels + (size_t) (height - 1 - y) * row_bytes;
-        uint8_t* destination = capture_pixels + (size_t) y * row_bytes;
-        memcpy(destination, source, row_bytes);
-    }
     capture_width = width;
     capture_height = height;
     capture_stride = width;
@@ -216,7 +237,6 @@ static bool capture_publish_pbo_frame(const uint8_t* pixels, int width, int heig
     pthread_mutex_unlock(&capture_mutex);
     return true;
 }
-
 static void capture_reset_pbo_slots(bool delete_objects) {
     for (int i = 0; i < GL_CAPTURE_PBO_COUNT; ++i) {
         if (delete_objects && capture_pbo_slots[i].fence != NULL
