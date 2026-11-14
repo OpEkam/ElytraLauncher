@@ -630,7 +630,7 @@ public class JREUtils {
     public static native void releaseBridgeWindow();
     /** Enables OSMesa-only frame snapshots for the gameplay recorder. */
     public static native void setFrameCaptureEnabled(boolean enabled);
-    /** Copies the newest RGBX frame into a direct buffer; info = width, height, row stride, sequence. */
+    /** Copies the newest RGBX frame; info[0..3] = dimensions/stride/sequence, info[4..9] = GL capture diagnostics. */
     public static native boolean copyLatestFrame(java.nio.ByteBuffer destination, int[] info);
     /**
      * Copies packed I420 into MediaCodec flexible-YUV planes using native
