@@ -25,6 +25,7 @@ void gl_setup_window();
 void gl_swap_interval(int swapInterval);
 void gl_set_frame_capture_enabled(bool enabled);
 bool gl_copy_latest_frame(void* destination, size_t capacity, int* metadata);
+void gl_get_frame_capture_stats(int* stats);
 
 
 #endif //POJAVLAUNCHER_GL_BRIDGE_H
