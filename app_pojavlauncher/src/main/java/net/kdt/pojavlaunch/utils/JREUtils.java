@@ -648,6 +648,10 @@ public class JREUtils {
     /** Converts a direct RGBA frame to I420 using optimized native loops. */
     public static native boolean convertRgbaToI420(java.nio.ByteBuffer source, int sourceOffset,
             int width, int height, int rowStridePixels, java.nio.ByteBuffer destination, int destinationOffset);
+    /** Converts a full-size direct RGBA frame to a smaller I420 output frame. */
+    public static native boolean convertRgbaToI420Scaled(java.nio.ByteBuffer source, int sourceOffset,
+            int sourceWidth, int sourceHeight, int rowStridePixels, int outputWidth, int outputHeight,
+            java.nio.ByteBuffer destination, int destinationOffset);
     public static native void initializeHooks();
     public static native void setupExitMethod(Context context);
     // Obtain AWT screen pixels to render on Android SurfaceView
