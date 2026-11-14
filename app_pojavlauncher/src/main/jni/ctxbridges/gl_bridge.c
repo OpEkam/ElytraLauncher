@@ -276,7 +276,7 @@ static void capture_reset_pbo_slots(bool delete_objects) {
     capture_pbo_height = 0;
 }
 
-static bool capture_pbo_frame(int width, int height) {
+static bool capture_pbo_frame(int width, int height, bool submit_new_frame) {
     capture_resolve_pbo_functions();
     atomic_store(&capture_diag_pbo_supported, capture_pbo_supported ? 1U : 0U);
     if (!capture_pbo_supported || currentBundle == NULL) return false;
@@ -344,32 +344,37 @@ static bool capture_pbo_frame(int width, int height) {
         }
     }
 
-    int free_slot = -1;
-    for (int i = 0; i < GL_CAPTURE_PBO_COUNT; ++i) {
-        if (!capture_pbo_slots[i].pending) {
-            free_slot = i;
-            break;
+    /* Poll completed transfers on every EGL swap so a ready frame is
+     * published immediately. Only issue a new GPU readback at the recorder's
+     * configured capture cadence. */
+    if (submit_new_frame) {
+        int free_slot = -1;
+        for (int i = 0; i < GL_CAPTURE_PBO_COUNT; ++i) {
+            if (!capture_pbo_slots[i].pending) {
+                free_slot = i;
+                break;
+            }
         }
-    }
-    if (free_slot >= 0) {
-        capture_pbo_slot_t* slot = &capture_pbo_slots[free_slot];
-        capture_glBindBuffer(GL_PIXEL_PACK_BUFFER, slot->buffer);
-        capture_glReadPixels(0, 0, width, height, 0x1908 /* GL_RGBA */,
-                             0x1401 /* GL_UNSIGNED_BYTE */, (void*) 0);
-        slot->fence = capture_glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
-        if (slot->fence != NULL) {
-            slot->pending = true;
-            atomic_fetch_add(&capture_diag_pbo_submitted, 1U);
+        if (free_slot >= 0) {
+            capture_pbo_slot_t* slot = &capture_pbo_slots[free_slot];
+            capture_glBindBuffer(GL_PIXEL_PACK_BUFFER, slot->buffer);
+            capture_glReadPixels(0, 0, width, height, 0x1908 /* GL_RGBA */,
+                                 0x1401 /* GL_UNSIGNED_BYTE */, (void*) 0);
+            slot->fence = capture_glFenceSync(GL_SYNC_GPU_COMMANDS_COMPLETE, 0);
+            if (slot->fence != NULL) {
+                slot->pending = true;
+                atomic_fetch_add(&capture_diag_pbo_submitted, 1U);
+            } else {
+                capture_glBindBuffer(GL_PIXEL_PACK_BUFFER, (unsigned int) previous_binding);
+                if (capture_glFinish != NULL) capture_glFinish();
+                capture_reset_pbo_slots(true);
+                capture_pbo_supported = false;
+                atomic_store(&capture_diag_pbo_supported, 0U);
+                return false;
+            }
         } else {
-            capture_glBindBuffer(GL_PIXEL_PACK_BUFFER, (unsigned int) previous_binding);
-            if (capture_glFinish != NULL) capture_glFinish();
-            capture_reset_pbo_slots(true);
-            capture_pbo_supported = false;
-            atomic_store(&capture_diag_pbo_supported, 0U);
-            return false;
+            atomic_fetch_add(&capture_diag_pbo_busy_skips, 1U);
         }
-    } else {
-        atomic_fetch_add(&capture_diag_pbo_busy_skips, 1U);
     }
 
     capture_glBindBuffer(GL_PIXEL_PACK_BUFFER, (unsigned int) previous_binding);
@@ -380,13 +385,15 @@ static void gl_capture_current_frame(void) {
     if (!atomic_load(&capture_enabled) || currentBundle == NULL
             || currentBundle->surface == EGL_NO_SURFACE) return;
 
-    /* Throttle before touching GL state or synchronizing with the GPU. */
+    /* Keep GPU readbacks at the configured cadence, but poll pending PBO
+     * fences on every swap so completed frames are not left waiting for the
+     * next 30 FPS capture tick. */
     struct timespec capture_now;
     if (clock_gettime(CLOCK_MONOTONIC, &capture_now) != 0) return;
     int64_t now_ns = (int64_t) capture_now.tv_sec * 1000000000LL
             + (int64_t) capture_now.tv_nsec;
-    if (capture_next_time_ns != 0 && now_ns < capture_next_time_ns) return;
-    capture_next_time_ns = now_ns + GL_CAPTURE_INTERVAL_NS;
+    bool capture_due = capture_next_time_ns == 0 || now_ns >= capture_next_time_ns;
+    if (capture_due) capture_next_time_ns = now_ns + GL_CAPTURE_INTERVAL_NS;
     if (capture_glReadPixels == NULL && eglGetProcAddress_p != NULL) {
         capture_glReadPixels = (capture_glReadPixels_t) eglGetProcAddress_p("glReadPixels");
     }
@@ -398,10 +405,13 @@ static void gl_capture_current_frame(void) {
             || width < 2 || height < 2
             || (size_t) width > SIZE_MAX / (size_t) height / 4) return;
 
-    /* Prefer asynchronous PBO readback on ES 3+/desktop GL 3+. */
-    if (capture_pbo_frame(width, height)) return;
+    /* Prefer asynchronous PBO readback on ES 3+/desktop GL 3+. Completed
+     * transfers are collected every swap; new transfers remain rate-limited. */
+    if (capture_pbo_frame(width, height, capture_due)) return;
 
-    /* Compatibility fallback for renderers that do not expose PBO/sync APIs. */
+    /* Compatibility fallback for renderers that do not expose PBO/sync APIs.
+     * This synchronous path remains limited to the configured capture rate. */
+    if (!capture_due) return;
     if (pthread_mutex_trylock(&capture_mutex) != 0) return;
     size_t bytes = (size_t) width * (size_t) height * 4;
     size_t row_bytes = (size_t) width * 4;
