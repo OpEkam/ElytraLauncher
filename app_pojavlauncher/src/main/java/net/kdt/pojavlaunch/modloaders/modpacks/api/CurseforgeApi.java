@@ -27,6 +27,8 @@ import net.kdt.pojavlaunch.utils.ZipUtils;
 
 import java.io.File;
 import java.io.IOException;
+import java.net.HttpURLConnection;
+import java.net.URL;
 import java.security.NoSuchAlgorithmException;
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -265,20 +267,78 @@ public class CurseforgeApi implements ModpackApi{
     }
 
     private String getDownloadUrl(long projectID, long fileID) {
-        // First try the official api endpoint
+        // First try the official API endpoints. These require a CurseForge API key,
+        // but remain useful for builds where one is configured.
         JsonObject response = mApiHandler.get("mods/"+projectID+"/files/"+fileID+"/download-url", JsonObject.class);
-        if (response != null && !response.get("data").isJsonNull())
-            return response.get("data").getAsString();
-
-        // Otherwise, fallback to building an edge link
-        JsonObject fallbackResponse = mApiHandler.get(String.format("mods/%s/files/%s", projectID, fileID), JsonObject.class);
-        if (fallbackResponse != null && !fallbackResponse.get("data").isJsonNull()){
-            JsonObject modData = fallbackResponse.get("data").getAsJsonObject();
-            int id = modData.get("id").getAsInt();
-            return String.format("https://edge.forgecdn.net/files/%s/%s/%s", id/1000, id % 1000, modData.get("fileName").getAsString());
+        JsonElement responseData = GsonJsonUtils.getJsonObjectSafe(response) == null
+                ? null : response.get("data");
+        if (responseData != null && !responseData.isJsonNull()) {
+            String url = responseData.getAsString();
+            if (url != null && !url.isEmpty()) return url;
         }
 
-        return null;
+        // The official file metadata endpoint can provide a filename for the CDN URL.
+        JsonObject fallbackResponse = mApiHandler.get(String.format("mods/%s/files/%s", projectID, fileID), JsonObject.class);
+        JsonObject modData = GsonJsonUtils.getJsonObjectSafe(fallbackResponse, "data");
+        if (modData != null) {
+            JsonElement idElement = modData.get("id");
+            JsonElement nameElement = modData.get("fileName");
+            if (idElement != null && nameElement != null && !nameElement.isJsonNull()) {
+                int id = idElement.getAsInt();
+                return String.format("https://edge.forgecdn.net/files/%s/%s/%s",
+                        id / 1000, id % 1000, nameElement.getAsString());
+            }
+        }
+
+        // CurseForge's website download route resolves a project/file pair without
+        // the authenticated Core API. It redirects to the actual CDN file URL.
+        // This is particularly important for importing third-party ZIP manifests,
+        // which contain IDs but do not include filenames or direct URLs.
+        return resolvePublicDownloadUrl(projectID, fileID);
+    }
+
+    @Nullable
+    private String resolvePublicDownloadUrl(long projectID, long fileID) {
+        HttpURLConnection connection = null;
+        try {
+            URL downloadEndpoint = new URL(String.format(
+                    "https://www.curseforge.com/api/v1/mods/%d/files/%d/download",
+                    projectID, fileID));
+            connection = (HttpURLConnection) downloadEndpoint.openConnection();
+            connection.setRequestMethod("GET");
+            connection.setInstanceFollowRedirects(true);
+            connection.setConnectTimeout(15000);
+            connection.setReadTimeout(15000);
+            connection.setRequestProperty("User-Agent", "ElytraLauncher");
+            connection.setRequestProperty("Accept", "application/octet-stream, */*");
+
+            int responseCode = connection.getResponseCode();
+            if (responseCode < HttpURLConnection.HTTP_OK ||
+                    responseCode >= HttpURLConnection.HTTP_MULT_CHOICE) {
+                Log.w("CurseforgeApi", "Public download resolver returned HTTP " +
+                        responseCode + " for " + projectID + " " + fileID);
+                return null;
+            }
+
+            String contentType = connection.getContentType();
+            if (contentType != null &&
+                    (contentType.toLowerCase(java.util.Locale.ROOT).contains("text/html") ||
+                     contentType.toLowerCase(java.util.Locale.ROOT).contains("application/json"))) {
+                Log.w("CurseforgeApi", "Public download resolver returned non-file content for " +
+                        projectID + " " + fileID + ": " + contentType);
+                return null;
+            }
+
+            // HttpURLConnection follows CurseForge's redirect automatically. Use the
+            // final URL so ModDownloader can perform the actual file download and SHA-1 check.
+            return connection.getURL().toString();
+        } catch (IOException | RuntimeException e) {
+            Log.w("CurseforgeApi", "Unable to resolve public download URL for " +
+                    projectID + " " + fileID, e);
+            return null;
+        } finally {
+            if (connection != null) connection.disconnect();
+        }
     }
 
     private @Nullable String getDownloadSha1(long projectID, long fileID) {
