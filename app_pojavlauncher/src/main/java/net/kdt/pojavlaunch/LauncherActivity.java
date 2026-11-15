@@ -223,7 +223,7 @@ public class LauncherActivity extends BaseActivity {
                 String jsonPath = LWJGL3ifyUtils.getJsonPath(LWJGL3ifyUtils.getProfileID(lwjgl3ifyJar));
                 File lwjgl3ifyClientJar = new File(jsonPath.replace(".json", ".jar"));
                 if (!lwjgl3ifyClientJar.exists()){
-                    if (mAccountSpinner.getSelectedAccount().isLocal() || !isOnline(this)){
+                    if (!isOnline(this)){
                         Tools.dialogOnUiThread(this, R.string.global_error, R.string.mc_download_failed);
                         return false;
                     }
