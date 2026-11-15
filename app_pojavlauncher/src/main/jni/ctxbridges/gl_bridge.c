@@ -68,6 +68,8 @@ static uint8_t* capture_pixels;
 static uint8_t* capture_staging;
 static size_t capture_capacity;
 static size_t capture_staging_capacity;
+static bool capture_staging_ready;
+static int capture_staging_width, capture_staging_height;
 static uint8_t* capture_row;
 static size_t capture_row_capacity;
 static int capture_width, capture_height, capture_stride, capture_sequence;
@@ -103,6 +105,7 @@ static atomic_uint capture_diag_pbo_submitted = 0;
 static atomic_uint capture_diag_pbo_published = 0;
 static atomic_uint capture_diag_pbo_busy_skips = 0;
 static atomic_uint capture_diag_pbo_lock_drops = 0;
+static atomic_uint capture_diag_pbo_deferred = 0;
 static atomic_uint capture_diag_sync_fallback = 0;
 /* EGL swap cadence and blocking time, sampled only while recording. */
 static atomic_ullong capture_diag_swap_count = 0;
@@ -118,6 +121,7 @@ void gl_get_frame_capture_stats(int* stats) {
     stats[3] = (int) atomic_load(&capture_diag_pbo_busy_skips);
     stats[4] = (int) atomic_load(&capture_diag_pbo_lock_drops);
     stats[5] = (int) atomic_load(&capture_diag_sync_fallback);
+    stats[9] = (int) atomic_load(&capture_diag_pbo_deferred);
     unsigned long long swaps = atomic_load(&capture_diag_swap_count);
     unsigned long long interval_total = atomic_load(&capture_diag_swap_interval_ns);
     unsigned long long duration_total = atomic_load(&capture_diag_swap_duration_ns);
@@ -134,6 +138,7 @@ void gl_set_frame_capture_enabled(bool enabled) {
         atomic_store(&capture_diag_pbo_published, 0);
         atomic_store(&capture_diag_pbo_busy_skips, 0);
         atomic_store(&capture_diag_pbo_lock_drops, 0);
+        atomic_store(&capture_diag_pbo_deferred, 0);
         atomic_store(&capture_diag_sync_fallback, 0);
         atomic_store(&capture_diag_swap_count, 0);
         atomic_store(&capture_diag_swap_interval_ns, 0);
@@ -203,40 +208,14 @@ static void capture_resolve_pbo_functions(void) {
     atomic_store(&capture_diag_pbo_supported, version_supported ? 1U : 0U);
 }
 
-static bool capture_publish_pbo_frame(const uint8_t* pixels, int width, int height) {
-    if (pixels == NULL || width < 2 || height < 2
-            || (size_t) width > SIZE_MAX / (size_t) height / 4) return false;
-
-    size_t bytes = (size_t) width * (size_t) height * 4;
-    size_t row_bytes = (size_t) width * 4;
-
-    /*
-     * Prepare the frame in a private staging buffer. The recorder never reads
-     * this pointer, so the expensive row flip/copy does not need the mutex.
-     * Only the short pointer swap below is shared with the recorder thread.
-     */
-    if (bytes > capture_staging_capacity) {
-        uint8_t* replacement = (uint8_t*) realloc(capture_staging, bytes);
-        if (replacement == NULL) return false;
-        capture_staging = replacement;
-        capture_staging_capacity = bytes;
-    }
-
-    for (int y = 0; y < height; ++y) {
-        const uint8_t* source = pixels + (size_t) (height - 1 - y) * row_bytes;
-        uint8_t* destination = capture_staging + (size_t) y * row_bytes;
-        memcpy(destination, source, row_bytes);
-    }
-
-    /*
-     * Keep the render thread non-blocking. If the recorder is copying the
-     * currently published frame, skip this publication rather than stalling
-     * Minecraft; the next completed PBO frame will be tried independently.
-     */
-    if (pthread_mutex_trylock(&capture_mutex) != 0) {
-        atomic_fetch_add(&capture_diag_pbo_lock_drops, 1U);
+/*
+ * Publish a completed staging frame with a short, non-blocking pointer swap.
+ * If the recorder currently owns the published buffer, leave the staged frame
+ * pending and retry on the next EGL swap instead of discarding it immediately.
+ */
+static bool capture_try_publish_staging_frame(void) {
+    if (!capture_staging_ready || pthread_mutex_trylock(&capture_mutex) != 0)
         return false;
-    }
 
     uint8_t* previous_published = capture_pixels;
     size_t previous_capacity = capture_capacity;
@@ -245,11 +224,53 @@ static bool capture_publish_pbo_frame(const uint8_t* pixels, int width, int heig
     capture_staging = previous_published;
     capture_staging_capacity = previous_capacity;
 
-    capture_width = width;
-    capture_height = height;
-    capture_stride = width;
+    capture_width = capture_staging_width;
+    capture_height = capture_staging_height;
+    capture_stride = capture_staging_width;
     ++capture_sequence;
+    capture_staging_ready = false;
     pthread_mutex_unlock(&capture_mutex);
+    atomic_fetch_add(&capture_diag_pbo_published, 1U);
+    return true;
+}
+
+static bool capture_publish_pbo_frame(const uint8_t* pixels, int width, int height) {
+    if (pixels == NULL || width < 2 || height < 2
+            || (size_t) width > SIZE_MAX / (size_t) height / 4) return false;
+
+    /* Never overwrite a staged frame that is waiting for the recorder's lock. */
+    if (capture_staging_ready) {
+        if (!capture_try_publish_staging_frame()) {
+            /* This newly completed PBO cannot be retained; count it as a real drop. */
+            atomic_fetch_add(&capture_diag_pbo_lock_drops, 1U);
+            return false;
+        }
+    }
+
+    size_t bytes = (size_t) width * (size_t) height * 4;
+    size_t row_bytes = (size_t) width * 4;
+    if (bytes > capture_staging_capacity) {
+        uint8_t* replacement = (uint8_t*) realloc(capture_staging, bytes);
+        if (replacement == NULL) return false;
+        capture_staging = replacement;
+        capture_staging_capacity = bytes;
+    }
+
+    /* The recorder never reads this private staging buffer. */
+    for (int y = 0; y < height; ++y) {
+        const uint8_t* source = pixels + (size_t) (height - 1 - y) * row_bytes;
+        uint8_t* destination = capture_staging + (size_t) y * row_bytes;
+        memcpy(destination, source, row_bytes);
+    }
+    capture_staging_width = width;
+    capture_staging_height = height;
+    capture_staging_ready = true;
+
+    if (!capture_try_publish_staging_frame()) {
+        /* Retain this completed frame and retry on a later EGL swap. */
+        atomic_fetch_add(&capture_diag_pbo_deferred, 1U);
+        return false;
+    }
     return true;
 }
 static void capture_reset_pbo_slots(bool delete_objects) {
@@ -289,6 +310,9 @@ static bool capture_pbo_frame(int width, int height, bool submit_new_frame) {
         capture_pbo_context = context;
     }
 
+    /* Retry a previously completed frame before collecting more GPU work. */
+    if (capture_staging_ready) capture_try_publish_staging_frame();
+
     int previous_binding = 0;
     capture_glGetIntegerv(GL_PIXEL_PACK_BUFFER_BINDING, &previous_binding);
 
@@ -325,9 +349,7 @@ static bool capture_pbo_frame(int width, int height, bool submit_new_frame) {
             const uint8_t* mapped = (const uint8_t*) capture_glMapBufferRange(
                     GL_PIXEL_PACK_BUFFER, 0, (intptr_t) bytes, GL_MAP_READ_BIT);
             if (mapped != NULL) {
-                if (capture_publish_pbo_frame(mapped, width, height)) {
-                    atomic_fetch_add(&capture_diag_pbo_published, 1U);
-                }
+                capture_publish_pbo_frame(mapped, width, height);
                 capture_glUnmapBuffer(GL_PIXEL_PACK_BUFFER);
             }
             capture_glDeleteSync(slot->fence);
